@@ -1,0 +1,5 @@
+node_modules/
+.veris-e2b/
+veris-proxy-linux-amd64
+veris-proxy
+*.log

@@ -1,0 +1,15 @@
+table ip veris {}
+delete table ip veris
+table ip veris {
+	chain output {
+		type nat hook output priority -100; policy accept;
+		meta skuid 14741 return
+		meta skuid 0 return
+		ip daddr 127.0.0.0/8 return
+		ip daddr 10.0.0.0/8 return
+		ip daddr 172.16.0.0/12 return
+		ip daddr 192.168.0.0/16 return
+		tcp dport 80 redirect to :8081
+		tcp dport 443 redirect to :8443
+	}
+}

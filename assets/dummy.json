@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "listen": "127.0.0.1:0",
+  "sandbox_id": "ca-mint",
+  "upstream": { "base_url": "http://mint.invalid" },
+  "services": [{ "name": "stripe", "hosts": ["api.stripe.com"] }]
+}

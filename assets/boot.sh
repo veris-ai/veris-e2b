@@ -1,0 +1,84 @@
+#!/bin/bash
+# veris-e2b supervisor. Runs ONCE as the E2B template's start command:
+# does the privileged setup (kernel redirect, CA trust), then parks in a wait
+# loop. The template snapshot is taken mid-wait, so every sandbox cloned from
+# the template resumes this process already running, rules already live in
+# the kernel — and no run ever needs root.
+#
+# A clone wakes it two ways:
+#   - zero-touch: /etc/veris/baked.env holds the coordinates (written at
+#     build by withVeris({ apiKey, environmentId })); the supervisor detects
+#     the clone by the wall-clock jump a snapshot resume produces.
+#   - handshake: a run writes /veris/run.env (wakeVeris() does this); its
+#     values override baked ones.
+#
+# Public-template mode: baked MINT_CA_AT=boot defers CA minting from build to
+# first wake, so a published template carries no shared CA private key.
+set -eu
+if [ "$(id -u)" != "0" ]; then exec sudo -n bash "$0" "$@"; fi
+exec >>/veris/boot.log 2>&1
+
+echo "boot: $(date -u +%FT%TZ) uid=$(id -u)"
+[ -f /etc/veris/baked.env ] && MINT_CA_AT="$(. /etc/veris/baked.env; echo "${MINT_CA_AT:-build}")" || MINT_CA_AT=build
+
+mint_ca() {
+  su veris -s /bin/bash -c \
+    '/usr/local/bin/veris-proxy serve --config /etc/veris/dummy.json \
+       --ca-dir /veris/ca --ready-file /tmp/ca-ready >/dev/null 2>&1 &
+     for i in $(seq 1 100); do [ -f /tmp/ca-ready ] && break; sleep 0.2; done
+     kill %1 2>/dev/null; wait 2>/dev/null; true'
+  [ -f /veris/ca/veris-ca.pem ] || { echo "boot: CA mint FAILED"; exit 1; }
+  cp /veris/ca/veris-ca.pem /usr/local/share/ca-certificates/veris-ca.crt
+  update-ca-certificates >/dev/null
+  KEYTOOL="$(command -v keytool || ls /opt/*/bin/keytool 2>/dev/null | head -1 || true)"
+  if [ -n "$KEYTOOL" ]; then
+    "$KEYTOOL" -importcert -noprompt -cacerts -storepass changeit \
+      -alias veris -file /veris/ca/veris-ca.pem >/dev/null
+  fi
+  chmod -R a+rX /veris/ca
+  echo "boot: CA minted and trusted"
+}
+
+# --- one-time, captured by the snapshot -------------------------------------
+if ! nft list table ip veris >/dev/null 2>&1; then
+  nft -f /etc/veris/redirect.nft
+  echo "boot: redirect installed"
+fi
+if [ "$MINT_CA_AT" != "boot" ] && [ ! -f /veris/ca/veris-ca.pem ]; then
+  mint_ca
+fi
+
+touch /veris/template-ready
+echo "boot: parked (wake: clock-jump with baked env, or /veris/run.env)"
+
+# --- park; wake on snapshot-resume (clock jump) or explicit run.env ----------
+prev=$(date +%s)
+while :; do
+  sleep 0.25
+  now=$(date +%s)
+  if [ $((now - prev)) -gt 5 ]; then echo "boot: clock jumped $((now - prev))s -> resumed in a clone"; break; fi
+  if [ -f /veris/run.env ]; then echo "boot: woken by run.env"; break; fi
+  prev=$now
+done
+
+# Public-template mode: each clone mints its own CA on first wake.
+[ -f /veris/ca/veris-ca.pem ] || mint_ca
+
+set -a
+[ -f /etc/veris/baked.env ] && . /etc/veris/baked.env
+[ -f /veris/run.env ] && . /veris/run.env
+set +a
+: "${VERIS_API_KEY:?boot: no VERIS_API_KEY (bake via withVeris opts, or wakeVeris())}"
+: "${VERIS_ENVIRONMENT_ID:?boot: no VERIS_ENVIRONMENT_ID (bake via withVeris opts, or wakeVeris())}"
+echo "boot: starting proxy as veris for env ${VERIS_ENVIRONMENT_ID}"
+
+PROXY_PATH="/usr/local/bin:/usr/bin:/bin"
+for d in /opt/*/bin; do [ -d "$d" ] && PROXY_PATH="$d:$PROXY_PATH"; done
+
+exec setpriv --reuid=veris --regid=veris --init-groups \
+  env HOME=/home/veris PATH="$PROXY_PATH" \
+      VERIS_API_KEY="${VERIS_API_KEY}" VERIS_API_BASE="${VERIS_API_BASE:-}" \
+  /usr/local/bin/veris-proxy serve --transparent --redirect-external \
+    --environment "${VERIS_ENVIRONMENT_ID}" --ttl-minutes "${VERIS_TTL_MINUTES:-30}" \
+    --ca-dir /veris/ca --write-env /veris/trust.env --env-trust-only \
+    --ready-file /veris/ready --log-level info >>/veris/serve.log 2>&1

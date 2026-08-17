@@ -1,0 +1,13 @@
+{
+  "name": "@veris-ai/e2b",
+  "version": "0.1.0",
+  "description": "Layer Veris dependency-sandbox interception onto any E2B template: withVeris() at build time, wakeVeris()/verisReceipt() at run time. Unmodified code, kernel-level rerouting, receipts.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": { ".": "./src/index.mjs" },
+  "files": ["src", "assets", "README.md"],
+  "peerDependencies": { "e2b": ">=2.0.0" },
+  "keywords": ["veris", "e2b", "sandbox", "integration-testing", "agents"],
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "https://github.com/veris-ai/veris-e2b" }
+}
