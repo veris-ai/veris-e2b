@@ -69,6 +69,12 @@ function resolveBinary(explicit) {
  * @param {string} [opts.binaryPath]    Override the proxy binary. Default resolution:
  *                                      $VERIS_PROXY_BINARY → package cache → public
  *                                      release URL → `gh release download`.
+ * @param {string} [opts.binarySource]  'local' (default): resolve on this machine and
+ *                                      upload as a layer. 'remote': the E2B build
+ *                                      downloads the pinned release itself — no local
+ *                                      binary, no upload. Remote requires the
+ *                                      veris-proxy release to be publicly
+ *                                      downloadable (dormant until then).
  * @param {string} [opts.environmentId] Bake the Veris environment id → template is
  *                                      pre-wired (per-customer pattern).
  * @param {string} [opts.apiKey]        Bake the API key too → zero-touch clones.
@@ -83,8 +89,8 @@ function resolveBinary(explicit) {
  *                                      background itself; the supervisor parks).
  */
 export function withVeris(template, opts = {}) {
-  const { binaryPath: explicitBinary, environmentId, apiKey, apiBase, mintCaAtBoot = false, startCmd } = opts
-  const binaryPath = resolveBinary(explicitBinary)
+  const { binaryPath: explicitBinary, binarySource = 'local', environmentId, apiKey, apiBase, mintCaAtBoot = false, startCmd } = opts
+  const binaryPath = binarySource === 'remote' ? null : resolveBinary(explicitBinary)
 
   // The SDK's .copy() only accepts paths relative to the template's build
   // context (by default, the directory of the file that constructed it). So
@@ -97,14 +103,21 @@ export function withVeris(template, opts = {}) {
   for (const asset of ['redirect.nft', 'dummy.json', 'boot.sh']) {
     fs.copyFileSync(path.join(ASSETS, asset), path.join(stageAbs, asset))
   }
-  fs.copyFileSync(binaryPath, path.join(stageAbs, 'veris-proxy'))
   const stage = '.veris-e2b'
-  const binary = `${stage}/veris-proxy`
+  if (binaryPath) fs.copyFileSync(binaryPath, path.join(stageAbs, 'veris-proxy'))
 
   let t = template
-    .runCmd('apt-get update -qq && apt-get install -y -qq nftables ca-certificates', { user: 'root' })
+    .runCmd('apt-get update -qq && apt-get install -y -qq nftables ca-certificates curl', { user: 'root' })
     .runCmd('useradd -u 14741 -m -s /usr/sbin/nologin veris && install -d -o veris -g veris /veris /veris/ca', { user: 'root' })
-    .copy(binary, '/usr/local/bin/veris-proxy')
+  // The binary layer: uploaded from this machine, or fetched by the build
+  // itself from the pinned public release (once releases are public). Either
+  // way it's one cached layer per proxy version.
+  t = binaryPath
+    ? t.copy(`${stage}/veris-proxy`, '/usr/local/bin/veris-proxy')
+    : t.runCmd(
+        `curl -fsSL https://github.com/${PROXY.repo}/releases/download/${PROXY.version}/${PROXY.asset} ` +
+        '-o /usr/local/bin/veris-proxy', { user: 'root' })
+  t = t
     .copy(`${stage}/redirect.nft`, '/etc/veris/redirect.nft')
     .copy(`${stage}/dummy.json`, '/etc/veris/dummy.json')
     .copy(`${stage}/boot.sh`, '/etc/veris/boot.sh')
