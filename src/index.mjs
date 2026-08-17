@@ -133,9 +133,20 @@ export async function setupVeris(sandbox, { binaryPath, apiKey, environmentId, a
   return verisReady(sandbox, timeoutSec)
 }
 
-/** Wake a Veris-layered sandbox by handshake (the non-baked mode), then wait for ready. */
-export async function wakeVeris(sandbox, { apiKey, environmentId, apiBase, timeoutSec = 240 }) {
-  const lines = [`VERIS_API_KEY=${apiKey}`, `VERIS_ENVIRONMENT_ID=${environmentId}`]
+/**
+ * Wake a Veris-layered sandbox by handshake, then wait for ready.
+ *
+ * Pass only what the template didn't bake — the supervisor merges baked.env
+ * with these values (run.env wins). The recommended split: bake the
+ * non-secret `environmentId` at build (per-customer templates pair 1:1 with
+ * environments anyway) and pass only the `apiKey` here, so no secret ever
+ * lives in a stored snapshot. An empty call is a pure wake trigger for
+ * templates that baked everything.
+ */
+export async function wakeVeris(sandbox, { apiKey, environmentId, apiBase, timeoutSec = 240 } = {}) {
+  const lines = []
+  if (apiKey) lines.push(`VERIS_API_KEY=${apiKey}`)
+  if (environmentId) lines.push(`VERIS_ENVIRONMENT_ID=${environmentId}`)
   if (apiBase) lines.push(`VERIS_API_BASE=${apiBase}`)
   await sandbox.files.write([{ path: '/veris/run.env', data: lines.join('\n') + '\n' }], { user: 'root' })
   return verisReady(sandbox, timeoutSec)
