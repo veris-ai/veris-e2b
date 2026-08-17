@@ -27,7 +27,12 @@ try {
   // agent + skill, at runtime (~1 min)
   await run(sbx, 'sudo npm install -g @anthropic-ai/claude-code@latest 2>&1 | tail -1')
   await run(sbx, 'git clone -q --depth 1 https://github.com/veris-ai/veris-skills.git /tmp/vs && mkdir -p ~/.claude/skills && cp -r /tmp/vs/skills/integration-testing ~/.claude/skills/ && ls ~/.claude/skills/integration-testing/SKILL.md')
-  mark('agent + skill installed')
+  // Register the Veris MCP server BEFORE the agent starts (a running claude -p
+  // cannot hot-add servers). This makes the skill's control-plane phases —
+  // get_testing_guide, promote_sandbox, reset_sandbox — work as written.
+  await run(sbx, 'claude mcp add veris --transport http "$VERIS_API_BASE/mcp" --header "X-API-Key: $VERIS_API_KEY" && claude mcp list', {
+    user: 'user', envs: { VERIS_API_BASE: process.env.VERIS_API_BASE, VERIS_API_KEY: process.env.VERIS_API_KEY } })
+  mark('agent + skill + veris MCP installed')
 
   // twin coordinates for the agent
   const twinId = await verisSandboxId(sbx)
