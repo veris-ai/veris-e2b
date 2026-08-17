@@ -49,14 +49,23 @@ if [ "$MINT_CA_AT" != "boot" ] && [ ! -f /veris/ca/veris-ca.pem ]; then
 fi
 
 touch /veris/template-ready
-echo "boot: parked (wake: clock-jump with baked env, or /veris/run.env)"
+# Zero-touch (self-start on clone resume) is only safe when the baked
+# coordinates are COMPLETE — otherwise the clock-jump wake races the runtime
+# run.env write and the proxy starts half-configured. Split mode parks until
+# run.env arrives.
+ZERO_TOUCH=no
+if [ -f /etc/veris/baked.env ]; then
+  ( . /etc/veris/baked.env
+    [ -n "${VERIS_API_KEY:-}" ] && [ -n "${VERIS_ENVIRONMENT_ID:-}" ] ) && ZERO_TOUCH=yes
+fi
+echo "boot: parked (zero_touch=$ZERO_TOUCH; wake: clock-jump if fully baked, else /veris/run.env)"
 
-# --- park; wake on snapshot-resume (clock jump) or explicit run.env ----------
+# --- park; wake on snapshot-resume (clock jump, fully-baked only) or run.env --
 prev=$(date +%s)
 while :; do
   sleep 0.25
   now=$(date +%s)
-  if [ $((now - prev)) -gt 5 ]; then echo "boot: clock jumped $((now - prev))s -> resumed in a clone"; break; fi
+  if [ "$ZERO_TOUCH" = "yes" ] && [ $((now - prev)) -gt 5 ]; then echo "boot: clock jumped $((now - prev))s -> resumed in a clone"; break; fi
   if [ -f /veris/run.env ]; then echo "boot: woken by run.env"; break; fi
   prev=$now
 done
