@@ -88,6 +88,51 @@ export function withVeris(template, opts = {}) {
   return t.setStartCmd(boot, waitForFile('/veris/template-ready'))
 }
 
+/**
+ * Veris-ize a RUNNING sandbox — no template, no build step. Works on the
+ * default `base` template or any template you already have, unmodified.
+ *
+ * This is the zero-friction path: `Sandbox.create()` then `setupVeris(...)`.
+ * The trade against a withVeris() template is per-sandbox setup time
+ * (~60-90s: apt install + 8MB binary upload + CA mint, vs ~1s from a
+ * snapshot) and the setup commands running as root inside the disposable VM
+ * (the proxy itself still runs unprivileged as uid 14741 either way).
+ * Loops and CI want the template; first contact and one-offs start here.
+ */
+export async function setupVeris(sandbox, { binaryPath, apiKey, environmentId, apiBase, timeoutSec = 240 }) {
+  if (!binaryPath || !fs.existsSync(binaryPath)) {
+    throw new Error('setupVeris: opts.binaryPath must point at a local veris-proxy-linux-amd64')
+  }
+  if (!apiKey || !environmentId) {
+    throw new Error('setupVeris: apiKey and environmentId are required')
+  }
+
+  await sandbox.commands.run(
+    'apt-get update -qq && apt-get install -y -qq nftables ca-certificates',
+    { user: 'root', timeoutMs: 180_000 })
+
+  const asset = (name) => fs.readFileSync(path.join(ASSETS, name))
+  const lines = [`VERIS_API_KEY=${apiKey}`, `VERIS_ENVIRONMENT_ID=${environmentId}`]
+  if (apiBase) lines.push(`VERIS_API_BASE=${apiBase}`)
+  await sandbox.files.write([
+    { path: '/usr/local/bin/veris-proxy', data: fs.readFileSync(binaryPath) },
+    { path: '/etc/veris/redirect.nft', data: asset('redirect.nft') },
+    { path: '/etc/veris/dummy.json', data: asset('dummy.json') },
+    { path: '/etc/veris/boot.sh', data: asset('boot.sh') },
+    // run.env exists before boot.sh starts, so its park loop exits on the
+    // first tick — same script, no waiting phase.
+    { path: '/veris/run.env', data: lines.join('\n') + '\n' },
+  ], { user: 'root' })
+
+  await sandbox.commands.run(
+    'useradd -u 14741 -m -s /usr/sbin/nologin veris 2>/dev/null; ' +
+    'install -d -o veris -g veris /veris/ca; chown veris:veris /veris 2>/dev/null; ' +
+    'chmod 755 /usr/local/bin/veris-proxy /etc/veris/boot.sh',
+    { user: 'root' })
+  await sandbox.commands.run('bash /etc/veris/boot.sh', { user: 'root', background: true })
+  return verisReady(sandbox, timeoutSec)
+}
+
 /** Wake a Veris-layered sandbox by handshake (the non-baked mode), then wait for ready. */
 export async function wakeVeris(sandbox, { apiKey, environmentId, apiBase, timeoutSec = 240 }) {
   const lines = [`VERIS_API_KEY=${apiKey}`, `VERIS_ENVIRONMENT_ID=${environmentId}`]

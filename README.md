@@ -7,6 +7,30 @@ completely unmodified. `veris-proxy` reroutes outbound HTTPS at the kernel;
 your code keeps its production hostnames, credentials, and SDKs, and the Veris
 sandbox's **receipt** proves what it actually received.
 
+## No template needed to start
+
+Any running E2B sandbox — the default `base` or one from a template you
+already have — can be Veris-ized at runtime, no build step:
+
+```js
+import { Sandbox } from 'e2b'
+import { setupVeris, verisReceipt, verisTeardown } from '@veris-ai/e2b'
+
+const sbx = await Sandbox.create()                 // plain base sandbox
+await setupVeris(sbx, {
+  binaryPath: './veris-proxy-linux-amd64',
+  apiKey: VERIS_API_KEY,
+  environmentId: VERIS_ENVIRONMENT_ID,
+})                                                 // ~25s: install, CA, proxy, twin
+// ...run tests, read receipts, verisTeardown(sbx)
+```
+
+The template path below moves that setup into a snapshot so every sandbox
+skips it (~1s instead of ~25s) and never runs setup as root. Start with
+`setupVeris`; graduate to `withVeris` when you're running loops.
+
+## The template path
+
 One function layers all of it onto any E2B template:
 
 ```js
