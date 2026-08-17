@@ -251,6 +251,25 @@ export async function verisReceipt(sandbox, { apiKey, apiBase = 'https://api.ver
   return receipt
 }
 
+
+/**
+ * Env vars for the twin world's NON-HTTP services (data planes): each maps
+ * its documented env_hint to its connection string — e.g. the platform's
+ * `postgres` service yields { DATABASE_URL: 'postgresql://…' }. The kernel
+ * redirect never touches these (not ports 80/443); the DSN is handed over the
+ * same way production hands it: as configuration.
+ */
+export async function verisDataPlaneEnv(sandbox, { apiKey, apiBase = 'https://api.veris.ai' }) {
+  const id = await verisSandboxId(sandbox)
+  const services = await fetch(`${apiBase}/v1/sandboxes/${id}/services`, {
+    headers: { 'X-API-Key': apiKey } }).then((r) => r.json())
+  const envs = {}
+  for (const svc of services) {
+    if (svc.env_hint && svc.url && !/^https?:/.test(svc.url)) envs[svc.env_hint] = svc.url
+  }
+  return envs
+}
+
 /** Stop the proxy so it deletes its per-run Veris sandbox (TTL is the backstop). */
 export async function verisTeardown(sandbox) {
   await sandbox.commands.run(
