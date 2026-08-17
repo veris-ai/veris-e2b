@@ -1,7 +1,7 @@
 // Split coordinates: environmentId baked in the template (not a secret),
 // VERIS_API_KEY passed only at wake — no secret in any stored snapshot.
 import { Sandbox, Template } from 'e2b'
-import { withVeris, wakeVeris, verisReceipt, verisTeardown } from '../src/index.mjs'
+import { withVeris, startVeris, verisReceipt, verisTeardown } from '../src/index.mjs'
 
 const t0 = Date.now()
 const mark = (l) => console.log(`[t+${((Date.now() - t0) / 1000).toFixed(1)}s] ${l}`)
@@ -22,7 +22,7 @@ try {
   if (/VERIS_API_KEY/.test(baked.stdout)) throw new Error('key leaked into baked.env!')
   console.log('baked.env holds only:', baked.stdout.trim().replace(/\n/g, ' · '))
 
-  await wakeVeris(sbx, { apiKey: process.env.VERIS_API_KEY })   // the key, and ONLY the key
+  await startVeris(sbx, { apiKey: process.env.VERIS_API_KEY })   // the key, and ONLY the key
   mark('woke with key only — supervisor merged baked env id + runtime key')
 
   const receipt = await verisReceipt(sbx, { apiKey: process.env.VERIS_API_KEY, apiBase: process.env.VERIS_API_BASE, service: 'google-identity' })

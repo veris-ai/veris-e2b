@@ -2,7 +2,7 @@
 //
 // Build time:  withVeris(template, opts)  — layer veris-proxy, its kernel
 //              redirect, and a snapshot-parked supervisor onto ANY template.
-// Run time:    wakeVeris / verisReady / verisTrustEnv / verisReceipt —
+// Run time:    startVeris / verisReady / verisTrustEnv / verisReceipt —
 //              drive a Veris-layered sandbox and prove what it intercepted.
 //
 // Everything here was verified against real E2B infrastructure (Aug 2026):
@@ -11,20 +11,64 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { execFileSync } from 'node:child_process'
 import { waitForFile } from 'e2b'
 
 const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets')
 
 const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`
 
+// The proxy release this package version is tested against.
+const PROXY = { repo: 'veris-ai/veris-proxy', version: 'v0.6.0', asset: 'veris-proxy-linux-amd64' }
+
+/**
+ * Find the veris-proxy binary. binaryPath is now an OVERRIDE, not a
+ * requirement — the default resolution chain:
+ *   1. opts.binaryPath
+ *   2. $VERIS_PROXY_BINARY
+ *   3. the package cache (~/.cache/veris-e2b/<version>/)
+ *   4. the public release URL (starts working the day releases go public)
+ *   5. `gh release download` (works today for anyone with repo access)
+ */
+function resolveBinary(explicit) {
+  if (explicit) {
+    if (!fs.existsSync(explicit)) throw new Error(`binaryPath ${explicit} does not exist`)
+    return explicit
+  }
+  const fromEnv = process.env.VERIS_PROXY_BINARY
+  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv
+
+  const cacheDir = path.join(os.homedir(), '.cache', 'veris-e2b', PROXY.version)
+  const cached = path.join(cacheDir, PROXY.asset)
+  if (fs.existsSync(cached)) return cached
+
+  fs.mkdirSync(cacheDir, { recursive: true })
+  const url = `https://github.com/${PROXY.repo}/releases/download/${PROXY.version}/${PROXY.asset}`
+  try {
+    execFileSync('curl', ['-fsSL', '-o', cached, url], { stdio: 'pipe' })
+    if (fs.existsSync(cached) && fs.statSync(cached).size > 1_000_000) return cached
+  } catch { /* private release: fall through to gh */ }
+  try {
+    execFileSync('gh', ['release', 'download', PROXY.version, '--repo', PROXY.repo,
+      '-p', PROXY.asset, '-O', cached, '--clobber'], { stdio: 'pipe' })
+    if (fs.existsSync(cached)) return cached
+  } catch { /* no gh or no access */ }
+  fs.rmSync(cached, { force: true })
+  throw new Error(
+    `veris-proxy binary not found. Either:\n` +
+    `  - pass opts.binaryPath / set $VERIS_PROXY_BINARY to a local ${PROXY.asset}, or\n` +
+    `  - authenticate GitHub CLI with access to ${PROXY.repo} (gh auth login), or\n` +
+    `  - download ${PROXY.asset} from the ${PROXY.repo} ${PROXY.version} release.`)
+}
+
 /**
  * Layer Veris interception onto any Build System 2.0 template.
  *
  * @param {import('e2b').TemplateBase} template  e.g. Template().fromTemplate('my-base')
  * @param {object} opts
- * @param {string} opts.binaryPath      Local path to veris-proxy-linux-amd64 (from the
- *                                      veris-ai/veris-proxy release). Required until
- *                                      releases are publicly downloadable.
+ * @param {string} [opts.binaryPath]    Override the proxy binary. Default resolution:
+ *                                      $VERIS_PROXY_BINARY → package cache → public
+ *                                      release URL → `gh release download`.
  * @param {string} [opts.environmentId] Bake the Veris environment id → template is
  *                                      pre-wired (per-customer pattern).
  * @param {string} [opts.apiKey]        Bake the API key too → zero-touch clones.
@@ -39,13 +83,8 @@ const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`
  *                                      background itself; the supervisor parks).
  */
 export function withVeris(template, opts = {}) {
-  const { binaryPath, environmentId, apiKey, apiBase, mintCaAtBoot = false, startCmd } = opts
-  if (!binaryPath || !fs.existsSync(binaryPath)) {
-    throw new Error(
-      'withVeris: opts.binaryPath must point at a local veris-proxy-linux-amd64 ' +
-      '(gh release download --repo veris-ai/veris-proxy -p veris-proxy-linux-amd64). ' +
-      'This becomes optional once veris-proxy releases are publicly downloadable.')
-  }
+  const { binaryPath: explicitBinary, environmentId, apiKey, apiBase, mintCaAtBoot = false, startCmd } = opts
+  const binaryPath = resolveBinary(explicitBinary)
 
   // The SDK's .copy() only accepts paths relative to the template's build
   // context (by default, the directory of the file that constructed it). So
@@ -99,10 +138,8 @@ export function withVeris(template, opts = {}) {
  * (the proxy itself still runs unprivileged as uid 14741 either way).
  * Loops and CI want the template; first contact and one-offs start here.
  */
-export async function setupVeris(sandbox, { binaryPath, apiKey, environmentId, apiBase, timeoutSec = 240 }) {
-  if (!binaryPath || !fs.existsSync(binaryPath)) {
-    throw new Error('setupVeris: opts.binaryPath must point at a local veris-proxy-linux-amd64')
-  }
+export async function setupVeris(sandbox, { binaryPath: explicitBinary, apiKey, environmentId, apiBase, timeoutSec = 240 }) {
+  const binaryPath = resolveBinary(explicitBinary)
   if (!apiKey || !environmentId) {
     throw new Error('setupVeris: apiKey and environmentId are required')
   }
@@ -134,7 +171,8 @@ export async function setupVeris(sandbox, { binaryPath, apiKey, environmentId, a
 }
 
 /**
- * Wake a Veris-layered sandbox by handshake, then wait for ready.
+ * Start Veris in a template-built sandbox: hand over whatever coordinates the
+ * template didn't bake, wake the supervisor, wait for the proxy + twin.
  *
  * Pass only what the template didn't bake — the supervisor merges baked.env
  * with these values (run.env wins). The recommended split: bake the
@@ -143,7 +181,7 @@ export async function setupVeris(sandbox, { binaryPath, apiKey, environmentId, a
  * lives in a stored snapshot. An empty call is a pure wake trigger for
  * templates that baked everything.
  */
-export async function wakeVeris(sandbox, { apiKey, environmentId, apiBase, timeoutSec = 240 } = {}) {
+export async function startVeris(sandbox, { apiKey, environmentId, apiBase, timeoutSec = 240 } = {}) {
   const lines = []
   if (apiKey) lines.push(`VERIS_API_KEY=${apiKey}`)
   if (environmentId) lines.push(`VERIS_ENVIRONMENT_ID=${environmentId}`)
@@ -206,3 +244,6 @@ export async function verisTeardown(sandbox) {
     'pkill -TERM -x veris-proxy 2>/dev/null; for i in $(seq 1 20); do pgrep -x veris-proxy >/dev/null || exit 0; sleep 1; done',
     { user: 'root' }).catch(() => {})
 }
+
+/** @deprecated renamed — use startVeris */
+export const wakeVeris = startVeris

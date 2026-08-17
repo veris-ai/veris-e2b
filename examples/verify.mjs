@@ -1,6 +1,6 @@
 // End-to-end verification of the package against real E2B + real Veris dev.
 import { Sandbox, Template } from 'e2b'
-import { withVeris, wakeVeris, verisReceipt, verisTeardown } from '../src/index.mjs'
+import { withVeris, startVeris, verisReceipt, verisTeardown } from '../src/index.mjs'
 
 const t0 = Date.now()
 const mark = (l) => console.log(`[t+${((Date.now() - t0) / 1000).toFixed(1)}s] ${l}`)
@@ -14,7 +14,7 @@ const sbx = await Sandbox.create('veris-sdk-test', { timeoutMs: 15 * 60 * 1000 }
 mark(`sandbox ${sbx.sandboxId}`)
 try {
   await sbx.commands.run('nft list table ip veris >/dev/null && pgrep -f boot.sh >/dev/null && echo "snapshot: rules live, supervisor parked"', { user: 'root' })
-  await wakeVeris(sbx, {
+  await startVeris(sbx, {
     apiKey: process.env.VERIS_API_KEY,
     environmentId: process.env.VERIS_ENVIRONMENT_ID,
     apiBase: process.env.VERIS_API_BASE,

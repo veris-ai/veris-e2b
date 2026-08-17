@@ -18,7 +18,6 @@ import { setupVeris, verisReceipt, verisTeardown } from '@veris-ai/e2b'
 
 const sbx = await Sandbox.create()                 // plain base sandbox
 await setupVeris(sbx, {
-  binaryPath: './veris-proxy-linux-amd64',
   apiKey: VERIS_API_KEY,
   environmentId: VERIS_ENVIRONMENT_ID,
 })                                                 // ~25s: install, CA, proxy, twin
@@ -39,7 +38,6 @@ import { withVeris } from '@veris-ai/e2b'
 
 const template = withVeris(
   Template().fromTemplate('my-base-template'),   // everything you already have
-  { binaryPath: './veris-proxy-linux-amd64' },
 )
 await Template.build(template, { alias: 'my-app-veris' })
 ```
@@ -48,10 +46,10 @@ Then every run:
 
 ```js
 import { Sandbox } from 'e2b'
-import { wakeVeris, verisTrustEnv, verisReceipt, verisTeardown } from '@veris-ai/e2b'
+import { startVeris, verisTrustEnv, verisReceipt, verisTeardown } from '@veris-ai/e2b'
 
 const sbx = await Sandbox.create('my-app-veris')
-await wakeVeris(sbx, { apiKey: VERIS_API_KEY, environmentId: VERIS_ENVIRONMENT_ID })
+await startVeris(sbx, { apiKey: VERIS_API_KEY, environmentId: VERIS_ENVIRONMENT_ID })
 
 const envs = await verisTrustEnv(sbx)                      // JVM truststore, CA paths…
 await sbx.commands.run('cd ~/repo && npm test', { user: 'user', envs })
@@ -87,7 +85,6 @@ detects the snapshot resume by wall-clock jump and starts itself:
 
 ```js
 const template = withVeris(Template().fromTemplate('acme-base'), {
-  binaryPath: './veris-proxy-linux-amd64',
   environmentId: 'acme-vendor-env',     // this template ↔ this Veris environment
   apiKey: process.env.VERIS_API_KEY,    // PRIVATE templates only — lives in the snapshot
 })
@@ -96,7 +93,7 @@ const template = withVeris(Template().fromTemplate('acme-base'), {
 
 The values ride a root-owned `/etc/veris/baked.env` (0600) — not `setEnvs`,
 because template env vars don't survive the supervisor's sudo hop and
-create-time envs never reach snapshot-resumed processes. `wakeVeris`
+create-time envs never reach snapshot-resumed processes. `startVeris`
 (run.env) still overrides per clone. Key rotation = rebuild (cheap, cached).
 
 ## Publishing a public template?
@@ -109,14 +106,14 @@ private key**. Never publish a template built with a baked `apiKey`.
 
 | `withVeris(template, opts)` | |
 |---|---|
-| `binaryPath` (required) | local `veris-proxy-linux-amd64` from the [veris-proxy release](https://github.com/veris-ai/veris-proxy/releases) |
+| `binaryPath` | optional override; default resolution: `$VERIS_PROXY_BINARY` → `~/.cache/veris-e2b/` → public release URL → `gh release download` |
 | `environmentId` | bake the Veris environment id (per-customer pattern) |
 | `apiKey` | bake the key too → zero-touch clones (private templates only) |
 | `apiBase` | non-default Veris control plane |
 | `mintCaAtBoot` | per-clone CA — required before publishing publicly |
 | `startCmd` | your template's own start command, chained before the supervisor (must exit or background) |
 
-Runtime helpers: `wakeVeris(sbx, {…})`, `verisReady(sbx)`, `verisTrustEnv(sbx)`,
+Runtime helpers: `startVeris(sbx, {…})`, `verisReady(sbx)`, `verisTrustEnv(sbx)`,
 `verisSandboxId(sbx)`, `verisReceipt(sbx, {…})`, `verisTeardown(sbx)`.
 
 ## The two rules

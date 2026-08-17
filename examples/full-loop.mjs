@@ -2,7 +2,7 @@
 //   E2B_API_KEY, VERIS_API_KEY, VERIS_ENVIRONMENT_ID (and VERIS_API_BASE if
 //   non-default) in the environment; veris-proxy binary downloaded locally.
 import { Sandbox, Template } from 'e2b'
-import { withVeris, wakeVeris, verisTrustEnv, verisReceipt, verisTeardown } from '@veris-ai/e2b'
+import { withVeris, startVeris, verisTrustEnv, verisReceipt, verisTeardown } from '@veris-ai/e2b'
 
 // ---- build time (once) ------------------------------------------------------
 const template = withVeris(
@@ -14,7 +14,7 @@ await Template.build(template, { alias: 'my-app-veris', cpuCount: 2, memoryMB: 1
 // ---- every run --------------------------------------------------------------
 const sbx = await Sandbox.create('my-app-veris', { timeoutMs: 15 * 60 * 1000 })
 try {
-  await wakeVeris(sbx, {
+  await startVeris(sbx, {
     apiKey: process.env.VERIS_API_KEY,
     environmentId: process.env.VERIS_ENVIRONMENT_ID,
     apiBase: process.env.VERIS_API_BASE,
