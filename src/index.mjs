@@ -19,7 +19,7 @@ const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'as
 const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`
 
 // The proxy release this package version is tested against.
-const PROXY = { repo: 'veris-ai/veris-proxy', version: 'v0.6.0', asset: 'veris-proxy-linux-amd64' }
+const PROXY = { repo: 'veris-ai/veris-proxy', version: 'v0.6.2', asset: 'veris-proxy-linux-amd64' }
 
 /**
  * Find the veris-proxy binary. binaryPath is now an OVERRIDE, not a
