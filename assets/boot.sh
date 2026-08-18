@@ -49,6 +49,19 @@ if [ "$MINT_CA_AT" != "boot" ] && [ ! -f /veris/ca/veris-ca.pem ]; then
 fi
 
 touch /veris/template-ready
+
+# Env transport: when this script is spawned as a fresh root command WITH the
+# coordinates already in its process environment (startVeris/setupVeris do
+# this via the SDK's per-command envs), skip the park entirely — no file ever
+# carries the secret. The build-time invocation never takes this path: its
+# sudo re-exec strips the environment.
+if [ -n "${VERIS_API_KEY:-}" ] && [ -n "${VERIS_ENVIRONMENT_ID:-}" ]; then
+  if pgrep -x veris-proxy >/dev/null 2>&1; then
+    echo "boot: proxy already running; env-start is a no-op"; exit 0
+  fi
+  touch /veris/external-start   # tell any parked supervisor to stand down
+  echo "boot: coordinates in process env — starting immediately (no run.env)"
+else
 # Zero-touch (self-start on clone resume) is only safe when the baked
 # coordinates are COMPLETE — otherwise the clock-jump wake races the runtime
 # run.env write and the proxy starts half-configured. Split mode parks until
@@ -65,18 +78,27 @@ prev=$(date +%s)
 while :; do
   sleep 0.25
   now=$(date +%s)
+  if [ -f /veris/external-start ]; then echo "boot: an env-transport start took over; parking supervisor exits"; exit 0; fi
   if [ "$ZERO_TOUCH" = "yes" ] && [ $((now - prev)) -gt 5 ]; then echo "boot: clock jumped $((now - prev))s -> resumed in a clone"; break; fi
   if [ -f /veris/run.env ]; then echo "boot: woken by run.env"; break; fi
   prev=$now
 done
+fi
 
 # Public-template mode: each clone mints its own CA on first wake.
 [ -f /veris/ca/veris-ca.pem ] || mint_ca
 
+# Precedence, most explicit first: process env (env-transport start) beats
+# run.env beats baked.env. Capture explicit values before sourcing files.
+ENV_KEY="${VERIS_API_KEY:-}"; ENV_EID="${VERIS_ENVIRONMENT_ID:-}"; ENV_BASE="${VERIS_API_BASE:-}"
 set -a
 [ -f /etc/veris/baked.env ] && . /etc/veris/baked.env
 [ -f /veris/run.env ] && . /veris/run.env
 set +a
+[ -n "$ENV_KEY" ] && export VERIS_API_KEY="$ENV_KEY"
+[ -n "$ENV_EID" ] && export VERIS_ENVIRONMENT_ID="$ENV_EID"
+[ -n "$ENV_BASE" ] && export VERIS_API_BASE="$ENV_BASE"
+true
 : "${VERIS_API_KEY:?boot: no VERIS_API_KEY (bake via withVeris opts, or wakeVeris())}"
 : "${VERIS_ENVIRONMENT_ID:?boot: no VERIS_ENVIRONMENT_ID (bake via withVeris opts, or wakeVeris())}"
 echo "boot: starting proxy as veris for env ${VERIS_ENVIRONMENT_ID}"

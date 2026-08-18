@@ -162,16 +162,11 @@ export async function setupVeris(sandbox, { binaryPath: explicitBinary, apiKey, 
     { user: 'root', timeoutMs: 180_000 })
 
   const asset = (name) => fs.readFileSync(path.join(ASSETS, name))
-  const lines = [`VERIS_API_KEY=${apiKey}`, `VERIS_ENVIRONMENT_ID=${environmentId}`]
-  if (apiBase) lines.push(`VERIS_API_BASE=${apiBase}`)
   await sandbox.files.write([
     { path: '/usr/local/bin/veris-proxy', data: fs.readFileSync(binaryPath) },
     { path: '/etc/veris/redirect.nft', data: asset('redirect.nft') },
     { path: '/etc/veris/dummy.json', data: asset('dummy.json') },
     { path: '/etc/veris/boot.sh', data: asset('boot.sh') },
-    // run.env exists before boot.sh starts, so its park loop exits on the
-    // first tick — same script, no waiting phase.
-    { path: '/veris/run.env', data: lines.join('\n') + '\n' },
   ], { user: 'root' })
 
   await sandbox.commands.run(
@@ -179,13 +174,23 @@ export async function setupVeris(sandbox, { binaryPath: explicitBinary, apiKey, 
     'install -d -o veris -g veris /veris/ca; chown veris:veris /veris 2>/dev/null; ' +
     'chmod 755 /usr/local/bin/veris-proxy /etc/veris/boot.sh',
     { user: 'root' })
-  await sandbox.commands.run('bash /etc/veris/boot.sh', { user: 'root', background: true })
+  // Coordinates travel as process env on the boot.sh command itself — boot.sh
+  // takes its env fast-path and no secret ever touches the filesystem.
+  const bootEnvs = { VERIS_API_KEY: apiKey, VERIS_ENVIRONMENT_ID: environmentId }
+  if (apiBase) bootEnvs.VERIS_API_BASE = apiBase
+  await sandbox.commands.run('bash /etc/veris/boot.sh', { user: 'root', background: true, envs: bootEnvs })
   return verisReady(sandbox, timeoutSec)
 }
 
 /**
  * Start Veris in a template-built sandbox: hand over whatever coordinates the
- * template didn't bake, wake the supervisor, wait for the proxy + twin.
+ * template didn't bake, wait for the proxy + twin.
+ *
+ * Default transport is ENV: a fresh root command is spawned with the
+ * coordinates in its process environment (per-command envs), so no secret
+ * ever touches the filesystem — safe even for published templates and paused
+ * sandboxes. Templates built with older boot.sh fall back to the run.env
+ * file handshake automatically; force with { transport: 'file' }.
  *
  * Pass only what the template didn't bake — the supervisor merges baked.env
  * with these values (run.env wins). The recommended split: bake the
@@ -194,7 +199,22 @@ export async function setupVeris(sandbox, { binaryPath: explicitBinary, apiKey, 
  * lives in a stored snapshot. An empty call is a pure wake trigger for
  * templates that baked everything.
  */
-export async function startVeris(sandbox, { apiKey, environmentId, apiBase, timeoutSec = 240 } = {}) {
+export async function startVeris(sandbox, { apiKey, environmentId, apiBase, timeoutSec = 240, transport = 'env' } = {}) {
+  if (transport === 'env') {
+    // boot.sh takes the env fast-path only when both required coordinates are
+    // present in its process env (merged with the template's baked non-secrets
+    // inside the script). Older templates lack that path — detect and fall back.
+    const probe = await sandbox.commands.run(
+      'grep -q "external-start" /etc/veris/boot.sh 2>/dev/null && echo env-ok || echo legacy', { user: 'root' })
+    if (probe.stdout.includes('env-ok')) {
+      const envs = {}
+      if (apiKey) envs.VERIS_API_KEY = apiKey
+      if (environmentId) envs.VERIS_ENVIRONMENT_ID = environmentId
+      if (apiBase) envs.VERIS_API_BASE = apiBase
+      await sandbox.commands.run('bash /etc/veris/boot.sh', { user: 'root', background: true, envs })
+      return verisReady(sandbox, timeoutSec)
+    }
+  }
   const lines = []
   if (apiKey) lines.push(`VERIS_API_KEY=${apiKey}`)
   if (environmentId) lines.push(`VERIS_ENVIRONMENT_ID=${environmentId}`)

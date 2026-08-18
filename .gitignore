@@ -3,3 +3,8 @@ node_modules/
 veris-proxy-linux-amd64
 veris-proxy
 *.log
+medusa-PR.md
+medusa-fix.patch
+medusa-receipt.json
+medusa-agent.log
+medusa-issue.md
