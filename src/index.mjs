@@ -21,6 +21,13 @@ const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`
 // The proxy release this package version is tested against.
 const PROXY = { repo: 'veris-ai/veris-proxy', version: 'v0.6.2', asset: 'veris-proxy-linux-amd64' }
 
+// How the supervisor is started at run time. Not `background: true`: the SDK
+// bounds a background command by its command timeout (60 s by default) and
+// kills the process with the stream. Measured 2026-08-18: a supervisor started
+// with `background: true` and no timeout died exactly 60 s after launch, and
+// every later HTTPS from the box hit a dead :8443. Detach it instead.
+const SUPERVISOR_LAUNCH = 'setsid nohup bash /etc/veris/boot.sh >/dev/null 2>&1 </dev/null &'
+
 /**
  * Find the veris-proxy binary. binaryPath is now an OVERRIDE, not a
  * requirement — the default resolution chain:
@@ -178,7 +185,7 @@ export async function setupVeris(sandbox, { binaryPath: explicitBinary, apiKey, 
   // takes its env fast-path and no secret ever touches the filesystem.
   const bootEnvs = { VERIS_API_KEY: apiKey, VERIS_ENVIRONMENT_ID: environmentId }
   if (apiBase) bootEnvs.VERIS_API_BASE = apiBase
-  await sandbox.commands.run('bash /etc/veris/boot.sh', { user: 'root', background: true, envs: bootEnvs })
+  await sandbox.commands.run(SUPERVISOR_LAUNCH, { user: 'root', envs: bootEnvs })
   return verisReady(sandbox, timeoutSec)
 }
 
@@ -211,7 +218,7 @@ export async function startVeris(sandbox, { apiKey, environmentId, apiBase, time
       if (apiKey) envs.VERIS_API_KEY = apiKey
       if (environmentId) envs.VERIS_ENVIRONMENT_ID = environmentId
       if (apiBase) envs.VERIS_API_BASE = apiBase
-      await sandbox.commands.run('bash /etc/veris/boot.sh', { user: 'root', background: true, envs })
+      await sandbox.commands.run(SUPERVISOR_LAUNCH, { user: 'root', envs })
       return verisReady(sandbox, timeoutSec)
     }
   }
