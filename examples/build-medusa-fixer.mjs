@@ -11,13 +11,16 @@ const box = withVeris(
   Template()
     .fromBaseImage()
     .runCmd('apt-get update -qq && apt-get install -y -qq postgresql postgresql-contrib ripgrep jq', { user: 'root' })
+    // Debian enables SSL against a snakeoil cert that is missing in the E2B build; loopback needs no TLS.
+    .runCmd('pg_conftool 15 main set ssl off', { user: 'root' })
     .runCmd('sudo corepack enable && corepack prepare yarn@3.2.1 --activate')
     .runCmd(`git clone --filter=blob:none https://github.com/medusajs/medusa.git /home/user/medusa && cd /home/user/medusa && git checkout ${BASE}`)
     .runCmd('cd /home/user/medusa && yarn install --inline-builds 2>&1 | tail -5'),
   {
     environmentId: 'eguk42zv4iv1fetl75nboxyt9',   // medusa-dev: stripe + postgres
     apiBase: process.env.VERIS_API_BASE,           // dev control plane — the default doesn't resolve
-    startCmd: 'sudo service postgresql start && sudo -u postgres createuser -s user 2>/dev/null; sudo -u postgres createdb -O user medusa_test 2>/dev/null; true',
+    // Wait for Postgres before the supervisor starts, so a clone never boots with the database down.
+    startCmd: 'sudo service postgresql start && for i in $(seq 1 30); do pg_isready -q && break; sleep 1; done && pg_isready -q && { sudo -u postgres createuser -s user 2>/dev/null; sudo -u postgres createdb -O user medusa_test 2>/dev/null; true; }',
   },
 )
 

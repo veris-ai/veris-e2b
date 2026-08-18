@@ -116,6 +116,21 @@ private key**. Never publish a template built with a baked `apiKey`.
 Runtime helpers: `startVeris(sbx, {…})`, `verisReady(sbx)`, `verisTrustEnv(sbx)`,
 `verisSandboxId(sbx)`, `verisReceipt(sbx, {…})`, `verisTeardown(sbx)`.
 
+## Baking services into a template
+
+`startCmd` runs before the supervisor and the two are chained with `&&`, so
+wait for a service you bake in rather than only starting it — a start command
+that ends in `; true` can snapshot with the service down:
+
+```js
+startCmd: 'sudo service postgresql start && for i in $(seq 1 30); do pg_isready -q && break; sleep 1; done && pg_isready -q'
+```
+
+Debian's Postgres enables SSL against a snakeoil certificate that is missing
+in an E2B build, so the cluster never starts; run `pg_conftool 15 main set ssl
+off` before the first start (see `examples/build-medusa-fixer.mjs`). The start
+command runs as the guest user, so `service … start` needs `sudo`.
+
 ## The two rules
 
 1. **Never point the code at Veris.** No base-URL overrides. The proxy is the
