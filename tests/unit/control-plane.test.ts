@@ -21,21 +21,21 @@ afterEach(() => vi.unstubAllGlobals())
 describe('mintEgressCredential capability probe', () => {
   it('returns null when the endpoint is absent (404) — auto can fall back', async () => {
     mockFetch(() => ({ status: 404 }))
-    expect(await cp().mintEgressCredential('sb_1')).toBeNull()
+    expect(await cp().mintEgressCredential('env_1', 'sb_1')).toBeNull()
   })
   it('throws VerisGatewayNotOfferedError with min_sdk on a 409', async () => {
     mockFetch(() => ({ status: 409, body: { min_sdk: '2.1.0' } }))
-    await expect(cp().mintEgressCredential('sb_1')).rejects.toBeInstanceOf(VerisGatewayNotOfferedError)
+    await expect(cp().mintEgressCredential('env_1', 'sb_1')).rejects.toBeInstanceOf(VerisGatewayNotOfferedError)
   })
   it('returns the credential on 200', async () => {
     mockFetch(() => ({ status: 200, body: { socks_address: 'gw:1080', username: 'u', password: 'p', ca_pem: 'PEM', canary_host: 'c' } }))
-    const cred = await cp().mintEgressCredential('sb_1')
+    const cred = await cp().mintEgressCredential('env_1', 'sb_1')
     expect(cred?.socks_address).toBe('gw:1080')
   })
   it('sends X-API-Key and X-Veris-SDK headers', async () => {
     let seen: Record<string, string> = {}
     mockFetch((_u, init) => { seen = init.headers as Record<string, string>; return { status: 200, body: { socks_address: 'g', username: 'u', password: 'p', ca_pem: 'x', canary_host: 'c' } } })
-    await cp().mintEgressCredential('sb_1')
+    await cp().mintEgressCredential('env_1', 'sb_1')
     expect(seen['X-API-Key']).toBe('k')
     expect(seen['X-Veris-SDK']).toBe('2.0.0-alpha.1')
   })

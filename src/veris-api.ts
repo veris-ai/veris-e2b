@@ -144,7 +144,7 @@ export class VerisApiImpl implements VerisApi {
     if (detachVeris || this.ctx.mode !== 'gateway') {
       return this.ctx.sandbox.updateNetwork(rest)
     }
-    const credential = await this.ctx.controlPlane.mintEgressCredential(this.ctx.twinId)
+    const credential = await this.ctx.controlPlane.mintEgressCredential(this.ctx.environmentId, this.ctx.twinId)
     if (!credential) {
       // Gateway mode was active at create but the endpoint is gone now — surface
       // the raw update rather than silently pretending we re-asserted.

@@ -188,7 +188,7 @@ export class Sandbox extends BaseSandbox {
         gatewayHealthy = false
       }
       if (gatewayHealthy) {
-        credential = await controlPlane.mintEgressCredential(twin.id).catch((e) => {
+        credential = await controlPlane.mintEgressCredential(twin.environment_id, twin.id).catch((e) => {
           if (mode === 'gateway') throw e
           if (e instanceof VerisGatewayNotOfferedError) return null // auto: fall back
           throw e
@@ -292,7 +292,7 @@ export class Sandbox extends BaseSandbox {
     let caCertPath: string | undefined
     let trustEnv: Record<string, string> | undefined
     if (mode === 'gateway') {
-      const credential = await controlPlane.mintEgressCredential(twinId)
+      const credential = await controlPlane.mintEgressCredential(twin.environment_id, twinId)
       if (credential) {
         const services = await controlPlane.services(twinId)
         await instance.updateNetwork(buildNetwork({ credential, services, mode: egress, allowOut }))

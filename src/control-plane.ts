@@ -151,8 +151,8 @@ export class ControlPlane {
    * absent), so `mode: 'auto'` can fall back; throws VerisGatewayNotOfferedError
    * on an explicit version refusal (409 sdk_too_old).
    */
-  async mintEgressCredential(sandboxId: string): Promise<EgressCredential | null> {
-    const res = await this.request('POST', `/v1/sandboxes/${sandboxId}/egress-credential`)
+  async mintEgressCredential(environmentId: string, sandboxId: string): Promise<EgressCredential | null> {
+    const res = await this.request('POST', `/v1/environments/${environmentId}/sandboxes/${sandboxId}/egress-credential`)
     if (res.status === 404) return null
     if (res.status === 409) {
       const body = await res.json().catch(() => ({})) as { min_sdk?: string }
