@@ -67,14 +67,17 @@ export const CA_INSTALL_CMD = [
  * remains.
  */
 export function sanitizeTrustEnv(served: Record<string, unknown> | undefined): Record<string, string> {
-  const allowed = new Set(Object.keys(vendoredTrustEnv()))
-  const out: Record<string, string> = {}
+  const vendored = vendoredTrustEnv()
+  // Start from the vendored map so a single bad or absent served value falls
+  // back PER KEY to the known-good default, rather than dropping that variable
+  // and leaving (e.g.) Python's requests with no CA bundle.
+  const out: Record<string, string> = { ...vendored }
   for (const [k, val] of Object.entries(served ?? {})) {
-    if (!allowed.has(k)) continue
+    if (!(k in vendored)) continue // unknown key: never injected
     if (typeof val !== 'string') continue
-    // Path-shaped only: absolute path, no shell metacharacters.
-    if (!/^\/[\w./-]+$/.test(val)) continue
+    // Absolute path; allow the common path characters (incl. + and ~).
+    if (!/^\/[\w./+~-]+$/.test(val)) continue
     out[k] = val
   }
-  return Object.keys(out).length ? out : vendoredTrustEnv()
+  return out
 }

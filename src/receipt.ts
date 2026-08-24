@@ -2,7 +2,7 @@
 // /veris/requests log — plus the canary probe that keeps a gateway-mode
 // receipt honest.
 import type { Sandbox } from 'e2b'
-import { ReceiptIntegrityError } from './errors'
+import { ReceiptIntegrityError, VerisError } from './errors'
 import type { ServiceInfo } from './control-plane'
 
 /** One intercepted request, from the twin's trace log. */
@@ -57,11 +57,24 @@ export function parseRequestsBody(body: unknown): { count: number; entries: Rece
 }
 
 export async function fetchReceiptEntry(svc: ServiceInfo): Promise<ReceiptEntry> {
-  const res = await fetch(`${svc.control_url}/veris/requests`)
-  const raw: unknown = await res.json()
+  const url = `${svc.control_url}/veris/requests`
+  const res = await fetch(url)
+  const text = await res.text()
+  if (!res.ok) {
+    throw new VerisError(`could not read receipt for service '${svc.name}' (${res.status})`, {
+      phase: 'receipt', responseBody: text.slice(0, 500) })
+  }
+  let raw: unknown
+  try { raw = JSON.parse(text) } catch {
+    throw new VerisError(`service '${svc.name}' returned a non-JSON receipt body`, {
+      phase: 'receipt', responseBody: text.slice(0, 500) })
+  }
   const { count, entries } = parseRequestsBody(raw)
   return { requests: count, controlUrl: svc.control_url, entries, raw }
 }
+
+/** A canary hostname must look like a hostname before it is put in a shell command. */
+const HOSTNAME_RE = /^[A-Za-z0-9.-]+$/
 
 /**
  * The canary probe: one in-sandbox HTTPS request to a reserved hostname only
@@ -79,15 +92,27 @@ export async function probeCanary(
    *  leaf even when installCa was false (system store untouched). */
   caCertPath?: string,
 ): Promise<void> {
+  if (!HOSTNAME_RE.test(canaryHost)) {
+    throw new ReceiptIntegrityError(
+      `refusing to probe a malformed canary host from the control plane: ${JSON.stringify(canaryHost)}`,
+      { phase: 'canary', verisSandboxId: expectedTwinId })
+  }
+  if (caCertPath && !/^\/[\w./-]+$/.test(caCertPath)) {
+    throw new ReceiptIntegrityError(`malformed CA path: ${JSON.stringify(caCertPath)}`, { phase: 'canary', verisSandboxId: expectedTwinId })
+  }
   const caFlag = caCertPath ? `--cacert ${caCertPath} ` : ''
+  // A non-zero curl exit (no tunnel → no HTTPS listener) must surface as a
+  // ReceiptIntegrityError, not the raw CommandExitError commands.run() throws;
+  // print a marker on failure and inspect exit code + stdout ourselves.
   const r = await sandbox.commands.run(
-    `curl -sS ${caFlag}--max-time 15 https://${canaryHost}/`, { timeoutMs: 30_000 })
+    `curl -sS ${caFlag}--max-time 15 https://${canaryHost}/ || echo "__VERIS_CANARY_FAIL__:$?"`,
+    { timeoutMs: 30_000 }).catch((e: unknown) => ({ stdout: '', stderr: String(e) }))
   let body: { veris_sandbox_id?: string; mode?: string } = {}
   try { body = JSON.parse(r.stdout) } catch { /* handled below */ }
   if (body.veris_sandbox_id !== expectedTwinId) {
     throw new ReceiptIntegrityError(
       `canary probe failed: egress from this E2B sandbox is not tunneled through the Veris gateway ` +
-      `(expected twin ${expectedTwinId}, canary answered: ${r.stdout.slice(0, 200) || r.stderr.slice(0, 200) || 'nothing'})`,
+      `(expected twin ${expectedTwinId}, canary answered: ${(r.stdout || r.stderr || 'nothing').slice(0, 200)})`,
       { phase: 'canary', verisSandboxId: expectedTwinId })
   }
 }

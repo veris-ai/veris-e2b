@@ -80,12 +80,17 @@ export class ControlPlane {
     return res
   }
 
-  private async json<T>(res: Response, context: string): Promise<T> {
+  private async json<T>(res: Response, context: string, phase?: import('./errors').VerisErrorPhase): Promise<T> {
     const text = await res.text()
     let parsed: unknown
     try { parsed = text ? JSON.parse(text) : undefined } catch { parsed = text }
     if (!res.ok) {
-      throw new VerisError(`${context}: ${res.status}`, { responseBody: parsed })
+      throw new VerisError(`${context}: ${res.status}`, { phase, responseBody: parsed })
+    }
+    // A success with no body would surface downstream as an opaque
+    // "cannot read properties of undefined" — turn it into a legible error here.
+    if (parsed === undefined) {
+      throw new VerisError(`${context}: empty response body`, { phase, responseBody: text })
     }
     return parsed as T
   }
@@ -95,7 +100,7 @@ export class ControlPlane {
       ttl_minutes: opts.ttlMinutes,
       metadata: opts.metadata,
     })
-    return this.json<TwinSandbox>(res, `create sandbox in environment ${environmentId}`)
+    return this.json<TwinSandbox>(res, `create sandbox in environment ${environmentId}`, 'twin-provision')
   }
 
   async getTwin(sandboxId: string): Promise<TwinSandbox | null> {
@@ -130,7 +135,7 @@ export class ControlPlane {
     if (res.status === 404) {
       throw new TwinExpiredError(`Veris sandbox ${sandboxId} not found — expired or deleted`, { verisSandboxId: sandboxId })
     }
-    return this.json<ServiceInfo[]>(res, `services of sandbox ${sandboxId}`)
+    return this.json<ServiceInfo[]>(res, `services of sandbox ${sandboxId}`, 'receipt')
   }
 
   async deleteTwin(environmentId: string, sandboxId: string): Promise<boolean> {
@@ -155,7 +160,7 @@ export class ControlPlane {
         `this SDK version is below the control plane's minimum for gateway mode${body.min_sdk ? ` (min_sdk ${body.min_sdk})` : ''} — upgrade @veris-ai/e2b`,
         { phase: 'credential-mint', verisSandboxId: sandboxId, minSdk: body.min_sdk, responseBody: body })
     }
-    return this.json<EgressCredential>(res, `mint egress credential for ${sandboxId}`)
+    return this.json<EgressCredential>(res, `mint egress credential for ${sandboxId}`, 'credential-mint')
   }
 
   /** Extend a twin's TTL so it stays in lockstep with an extended E2B sandbox. */

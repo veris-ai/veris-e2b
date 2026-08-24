@@ -48,19 +48,27 @@ export function resolveBinary(explicit?: string): string {
 
   const cacheDir = path.join(os.homedir(), '.cache', 'veris-e2b', PROXY.version)
   const cached = path.join(cacheDir, PROXY.asset)
-  if (fs.existsSync(cached)) return cached
+  // A prior interrupted download can leave a truncated binary here — only trust
+  // a cached copy that passes the same size check a fresh download must.
+  const looksComplete = (p: string) => fs.existsSync(p) && fs.statSync(p).size > 1_000_000
+  if (looksComplete(cached)) return cached
 
   fs.mkdirSync(cacheDir, { recursive: true })
+  // Download to a temp path and rename only on success, so a dropped connection
+  // never leaves a partial binary at the final cache path.
+  const tmp = `${cached}.download`
   const url = `https://github.com/${PROXY.repo}/releases/download/${PROXY.version}/${PROXY.asset}`
   try {
-    execFileSync('curl', ['-fsSL', '-o', cached, url], { stdio: 'pipe' })
-    if (fs.existsSync(cached) && fs.statSync(cached).size > 1_000_000) return cached
+    execFileSync('curl', ['-fsSL', '-o', tmp, url], { stdio: 'pipe' })
+    if (looksComplete(tmp)) { fs.renameSync(tmp, cached); return cached }
   } catch { /* private release: fall through to gh */ }
+  fs.rmSync(tmp, { force: true })
   try {
     execFileSync('gh', ['release', 'download', PROXY.version, '--repo', PROXY.repo,
-      '-p', PROXY.asset, '-O', cached, '--clobber'], { stdio: 'pipe' })
-    if (fs.existsSync(cached)) return cached
+      '-p', PROXY.asset, '-O', tmp, '--clobber'], { stdio: 'pipe' })
+    if (looksComplete(tmp)) { fs.renameSync(tmp, cached); return cached }
   } catch { /* no gh or no access */ }
+  fs.rmSync(tmp, { force: true })
   fs.rmSync(cached, { force: true })
   throw new Error(
     `veris-proxy binary not found. Either:\n` +
@@ -158,10 +166,11 @@ export interface SetupVerisOpts {
  */
 export async function setupVeris(sandbox: Sandbox, opts: SetupVerisOpts): Promise<CommandResult> {
   const { binaryPath: explicitBinary, apiKey, environmentId, apiBase, timeoutSec = 240 } = opts
-  const binaryPath = resolveBinary(explicitBinary)
   if (!apiKey || !environmentId) {
     throw new Error('setupVeris: apiKey and environmentId are required')
   }
+  // Validate args before the (possibly network) binary resolution.
+  const binaryPath = resolveBinary(explicitBinary)
 
   await sandbox.commands.run(
     'apt-get update -qq && apt-get install -y -qq nftables ca-certificates',

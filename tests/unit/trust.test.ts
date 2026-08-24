@@ -13,13 +13,13 @@ describe('sanitizeTrustEnv', () => {
     expect(out).not.toHaveProperty('LD_PRELOAD')
     expect(out.SSL_CERT_FILE).toBe(SYSTEM_BUNDLE)
   })
-  it('drops non-path values (shell metacharacters, relative paths)', () => {
+  it('reverts a bad value to the vendored default PER KEY (never unsets it)', () => {
     const out = sanitizeTrustEnv({ SSL_CERT_FILE: '/ok/a.crt', CURL_CA_BUNDLE: 'x; rm -rf /', REQUESTS_CA_BUNDLE: 'relative' })
-    expect(out.SSL_CERT_FILE).toBe('/ok/a.crt')
-    expect(out).not.toHaveProperty('CURL_CA_BUNDLE')
-    expect(out).not.toHaveProperty('REQUESTS_CA_BUNDLE')
+    expect(out.SSL_CERT_FILE).toBe('/ok/a.crt')                       // valid served value wins
+    expect(out.CURL_CA_BUNDLE).toBe(vendoredTrustEnv().CURL_CA_BUNDLE) // bad value → vendored default
+    expect(out.REQUESTS_CA_BUNDLE).toBe(vendoredTrustEnv().REQUESTS_CA_BUNDLE)
   })
-  it('falls back to the vendored map when nothing valid remains', () => {
+  it('falls back to the full vendored map when nothing valid is served', () => {
     expect(sanitizeTrustEnv({ EVIL: 'x' })).toEqual(vendoredTrustEnv())
     expect(sanitizeTrustEnv(undefined)).toEqual(vendoredTrustEnv())
   })

@@ -27,6 +27,7 @@ export {
   VerisUntouchedError,
   TwinExpiredError,
   TemplateUnsupportedError,
+  UnsupportedOperationError,
 } from './errors'
 export type { VerisErrorPhase } from './errors'
 export { SDK_VERSION } from './version'

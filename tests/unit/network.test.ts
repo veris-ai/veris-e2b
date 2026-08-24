@@ -45,3 +45,16 @@ describe('buildNetwork', () => {
     expect(n.allowOut).toContain('registry.npmjs.org')
   })
 })
+
+describe('dataPlaneHosts — real DSN shapes', () => {
+  const svc = (url: string) => ({ name: 'dp', status: 'ready', url, control_url: 'https://x', env_hint: 'X', routes: null })
+  it('extracts hosts from every common DSN form', () => {
+    expect(dataPlaneHosts([svc('postgresql://u:p@host:5432')])).toEqual(['host'])       // no trailing /
+    expect(dataPlaneHosts([svc('postgres://host.example.com/db')])).toEqual(['host.example.com']) // no creds
+    expect(dataPlaneHosts([svc('redis://redis.veris.ai:6379')])).toEqual(['redis.veris.ai'])
+    expect(dataPlaneHosts([svc('postgresql://u:p@[2001:db8::1]:5432/db')])).toEqual(['2001:db8::1']) // ipv6, no brackets
+  })
+  it('allows every host of a multi-host DSN', () => {
+    expect(dataPlaneHosts([svc('mongodb://u:p@m1:27017,m2:27017/db')])).toEqual(['m1', 'm2'])
+  })
+})

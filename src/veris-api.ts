@@ -9,6 +9,7 @@ import { VerisUntouchedError, VerisError } from './errors'
 import { buildNetwork } from './network'
 import type { EgressMode } from './network'
 import { vendoredTrustEnv } from './trust'
+import { verisTrustEnv } from './legacy/functions'
 
 /** Everything needed to answer Veris queries about a live sandbox. */
 export interface VerisContext {
@@ -21,6 +22,8 @@ export interface VerisContext {
   allowOut: string[]
   /** Present in gateway mode: the reserved host the canary probe dials. */
   canaryHost?: string
+  /** Present in gateway mode: the CA file path curl's --cacert uses in the canary. */
+  caCertPath?: string
   /** Present in gateway mode: server-served trust env (falls back to vendored). */
   trustEnv?: Record<string, string>
   /** Whether this twin is owned (kill deletes it) or attached (caller owns it). */
@@ -66,7 +69,7 @@ export class VerisApiImpl implements VerisApi {
     // In gateway mode the canary proves egress is still tunneled before we
     // trust any count — a receipt from an un-tunneled sandbox would lie.
     if (this.ctx.mode === 'gateway' && this.ctx.canaryHost) {
-      await probeCanary(this.ctx.sandbox, this.ctx.canaryHost, this.ctx.twinId)
+      await probeCanary(this.ctx.sandbox, this.ctx.canaryHost, this.ctx.twinId, this.ctx.caCertPath)
     }
     const services = await this.services()
     if (service !== undefined) {
@@ -80,7 +83,9 @@ export class VerisApiImpl implements VerisApi {
     }
     const entries = await Promise.all(
       services.filter((s) => isHttpUrl(s.control_url)).map(async (svc) => [svc.name, await fetchReceiptEntry(svc)] as const))
-    const leaks: ReceiptLeak[] = this.ctx.mode === 'gateway' && this.ctx.egress === 'open'
+    // Proxy mode redirects only tcp/80+443, so QUIC/HTTP3 and ECH bypass it —
+    // the same blind spots open gateway mode carries. Strict gateway mode has none.
+    const leaks: ReceiptLeak[] = this.ctx.mode === 'proxy' || this.ctx.egress === 'open'
       ? ['udp-quic-possible', 'ech-possible'] : []
     return {
       services: Object.fromEntries(entries),
@@ -121,6 +126,9 @@ export class VerisApiImpl implements VerisApi {
   }
 
   async getTrustEnv(): Promise<Record<string, string>> {
+    // Proxy mode's CA lives under /veris/ca with its own env map — the gateway
+    // vendored paths don't exist there, so read the real one from the sandbox.
+    if (this.ctx.mode === 'proxy') return verisTrustEnv(this.ctx.sandbox)
     return this.ctx.trustEnv ?? vendoredTrustEnv()
   }
 
@@ -142,8 +150,13 @@ export class VerisApiImpl implements VerisApi {
       // the raw update rather than silently pretending we re-asserted.
       return this.ctx.sandbox.updateNetwork(rest)
     }
+    // Fold the caller's static allowOut into the rebuilt allowlist rather than
+    // letting `base` overwrite it — dropping their hosts would silently break
+    // whatever egress they were adding.
+    const callerAllow = Array.isArray(rest.allowOut)
+      ? rest.allowOut.filter((x): x is string => typeof x === 'string') : []
     const services = await this.services()
-    const base = buildNetwork({ credential, services, mode: this.ctx.egress, allowOut: this.ctx.allowOut })
+    const base = buildNetwork({ credential, services, mode: this.ctx.egress, allowOut: [...this.ctx.allowOut, ...callerAllow] })
     await this.ctx.sandbox.updateNetwork({ ...rest, ...base })
   }
 }

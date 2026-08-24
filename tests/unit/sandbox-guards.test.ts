@@ -27,3 +27,10 @@ describe('fork is refused', () => {
     expect(() => (inst as unknown as { fork(): never }).fork()).toThrow(UnsupportedOperationError)
   })
 })
+
+describe('static fork is refused', () => {
+  it('Sandbox.fork rejects with UnsupportedOperationError', async () => {
+    await expect((Sandbox as unknown as { fork(): Promise<never> }).fork())
+      .rejects.toBeInstanceOf(UnsupportedOperationError)
+  })
+})
