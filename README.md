@@ -111,24 +111,6 @@ Choosing:
   annotates these in its `leaks` field. Use strict if your workload speaks
   HTTP/3 or ECH toward a mocked vendor.
 
-## Coming from v0.1
-
-v2 is a rewrite: the v0.1 free functions (`setupVeris`, `withVeris`,
-`startVeris`, `verisReceipt`, …) are **removed** in favor of the `Sandbox`
-class. The old in-sandbox mechanism still runs — it's now `mode: 'proxy'`,
-driven by the class instead of by hand.
-
-| v0.1 | v2 |
-|---|---|
-| direct `e2b` dependency alongside this package | remove it; import everything from `@veris-ai/e2b` (`e2b` is now a regular dependency — two copies break `instanceof`) |
-| `Sandbox.create()` + `setupVeris(sbx, {...})` | `Sandbox.create({ veris: {...} })` |
-| `withVeris(t, {...})` + `startVeris(sbx, {...})` | build a plain template; `Sandbox.create('tpl', { veris: { mode: 'proxy' } })` |
-| `verisTrustEnv(sbx)` spread into every run | nothing (auto), or `sbx.veris.getTrustEnv()` |
-| `verisReceipt(sbx, {apiKey})` | `sbx.veris.receipt()` / `sbx.veris.assertTouched('stripe')` |
-| `verisDataPlaneEnv(sbx, {...})` | auto-injected; `sbx.veris.getDataPlaneEnv()` |
-| `verisSandboxId(sbx)` | `sbx.verisSandboxId` |
-| `verisTeardown(sbx); sbx.kill()` | `sbx.kill()` |
-
 ## Examples
 
 - [`examples/quickstart.mjs`](examples/quickstart.mjs) — the loop above, runnable.

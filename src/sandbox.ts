@@ -281,7 +281,7 @@ export class Sandbox extends BaseSandbox {
     if (!twin || twin.status === 'failed') {
       throw new TwinExpiredError(
         `E2B sandbox ${sandboxId} is alive but its Veris twin ${twinId} is gone (expired or deleted). ` +
-        `Re-provisioning a twin under an existing E2B sandbox is out of scope for v2.0 — kill and recreate.`,
+        `Re-provisioning a twin under an existing E2B sandbox is out of scope — kill and recreate.`,
         { verisSandboxId: twinId })
     }
 
