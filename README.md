@@ -46,11 +46,11 @@ server-side gateway does not exist yet, so it cannot run end to end.
 
 | Capability | State |
 |---|---|
-| `Sandbox` class (`create`/`connect`/`kill`/`setTimeout`), `sbx.veris.*` | **Verified** against dev, on proxy mode |
-| Proxy mode (in-sandbox `veris-proxy`, the v1 mechanism) | **Verified** — same machinery as v0.1, now class-shaped |
-| Receipts, `assertTouched`, data-plane env, trust env | **Verified** on proxy mode |
-| Deprecated v1 free functions (`setupVeris`, `withVeris`, …) | **Verified** — unchanged behavior |
-| Gateway mode (E2B BYOP SOCKS5 egress, no in-sandbox footprint) | **Client implemented, unit-tested; blocked on** the Veris gateway deploy + E2B BYOP beta. `mode: 'gateway'` throws `VerisGatewayNotOfferedError` until the control plane offers it |
+| `Sandbox` class (`create`/`connect`/`kill`/`setTimeout`), `sbx.veris.*` | **Verified** against dev |
+| Proxy mode (in-sandbox `veris-proxy`) | **Verified** — the in-sandbox mechanism, class-shaped |
+| Receipts, `assertTouched`, data-plane env, trust env | **Verified** |
+| Gateway mode — control plane (twin → `egress-credential` → CA) | **Verified** live in dev |
+| Gateway mode — BYOP tunnel + gateway TLS-MITM | **Deployed in dev; the interception itself is unproven** — needs E2B BYOP access + a real sandbox. `mode: 'gateway'` throws `VerisGatewayNotOfferedError` where the control plane doesn't offer it |
 
 `mode: 'auto'` (the default) uses gateway mode when the control plane offers it
 to this SDK version and the post-create canary proves the tunnel is live;
@@ -111,18 +111,20 @@ Choosing:
   annotates these in its `leaks` field. Use strict if your workload speaks
   HTTP/3 or ECH toward a mocked vendor.
 
-## Migration from v0.1
+## Coming from v0.1
 
-The v1 free functions still work and are re-exported (deprecated). The class is
-the new surface.
+v2 is a rewrite: the v0.1 free functions (`setupVeris`, `withVeris`,
+`startVeris`, `verisReceipt`, …) are **removed** in favor of the `Sandbox`
+class. The old in-sandbox mechanism still runs — it's now `mode: 'proxy'`,
+driven by the class instead of by hand.
 
 | v0.1 | v2 |
 |---|---|
 | direct `e2b` dependency alongside this package | remove it; import everything from `@veris-ai/e2b` (`e2b` is now a regular dependency — two copies break `instanceof`) |
 | `Sandbox.create()` + `setupVeris(sbx, {...})` | `Sandbox.create({ veris: {...} })` |
-| `withVeris(t, {...})` + `startVeris(sbx, {...})` | build a plain template; `Sandbox.create('tpl', { veris: {...} })` — or keep both, proxy mode auto-detects |
+| `withVeris(t, {...})` + `startVeris(sbx, {...})` | build a plain template; `Sandbox.create('tpl', { veris: { mode: 'proxy' } })` |
 | `verisTrustEnv(sbx)` spread into every run | nothing (auto), or `sbx.veris.getTrustEnv()` |
-| `verisReceipt(sbx, {apiKey})` | `sbx.veris.receipt()` / `sbx.veris.assertTouched('stripe')` — note the receipt shape changed (services under `.services`, camelCase fields, `raw` still verbatim) |
+| `verisReceipt(sbx, {apiKey})` | `sbx.veris.receipt()` / `sbx.veris.assertTouched('stripe')` |
 | `verisDataPlaneEnv(sbx, {...})` | auto-injected; `sbx.veris.getDataPlaneEnv()` |
 | `verisSandboxId(sbx)` | `sbx.verisSandboxId` |
 | `verisTeardown(sbx); sbx.kill()` | `sbx.kill()` |
@@ -131,7 +133,6 @@ the new surface.
 
 - [`examples/quickstart.mjs`](examples/quickstart.mjs) — the loop above, runnable.
 - [`examples/full-loop.mjs`](examples/full-loop.mjs) — clone, `npm ci`, test, prove, tear down.
-- [`examples/legacy/`](examples/legacy) — the v0.1 free-function examples, unchanged (proxy mode).
 
 ## Development
 

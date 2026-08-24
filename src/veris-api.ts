@@ -9,7 +9,7 @@ import { VerisUntouchedError, VerisError } from './errors'
 import { buildNetwork } from './network'
 import type { EgressMode } from './network'
 import { vendoredTrustEnv } from './trust'
-import { verisTrustEnv } from './legacy/functions'
+import { proxyTrustEnv } from './proxy-mode'
 
 /** Everything needed to answer Veris queries about a live sandbox. */
 export interface VerisContext {
@@ -128,7 +128,7 @@ export class VerisApiImpl implements VerisApi {
   async getTrustEnv(): Promise<Record<string, string>> {
     // Proxy mode's CA lives under /veris/ca with its own env map — the gateway
     // vendored paths don't exist there, so read the real one from the sandbox.
-    if (this.ctx.mode === 'proxy') return verisTrustEnv(this.ctx.sandbox)
+    if (this.ctx.mode === 'proxy') return proxyTrustEnv(this.ctx.sandbox)
     return this.ctx.trustEnv ?? vendoredTrustEnv()
   }
 

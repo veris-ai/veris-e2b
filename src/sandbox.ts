@@ -33,10 +33,10 @@ import {
 } from './errors'
 import { SDK_VERSION } from './version'
 import {
-  setupVeris,
-  verisTeardown,
-  verisSandboxId as legacyVerisSandboxId,
-} from './legacy/functions'
+  setupProxy,
+  proxyTeardown,
+  proxySandboxId,
+} from './proxy-mode'
 
 export type VerisMode = 'auto' | 'gateway' | 'proxy'
 
@@ -269,7 +269,7 @@ export class Sandbox extends BaseSandbox {
     // in-sandbox proxy is up) — read it back from the running proxy's log.
     let twinId = meta[META.twinId]
     if (!twinId && mode === 'proxy') {
-      twinId = await legacyVerisSandboxId(instance).catch(() => '')
+      twinId = await proxySandboxId(instance).catch(() => '')
     }
     if (!twinId) {
       throw new VerisError(`sandbox ${sandboxId} has Veris metadata but no resolvable twin id`, { phase: 'connect', responseBody: meta })
@@ -344,7 +344,7 @@ export class Sandbox extends BaseSandbox {
   /** Kill the E2B sandbox AND delete the Veris twin (unless it was attached). */
   override async kill(opts?: Parameters<BaseSandbox['kill']>[0]): Promise<boolean> {
     if (this.verisMode === 'proxy') {
-      await verisTeardown(this).catch(() => {})
+      await proxyTeardown(this).catch(() => {})
     }
     if (this._verisOwnsTwin) {
       await this._verisControlPlane.deleteTwin(this._verisEnvironmentId, this.verisSandboxId).catch(() => {})
@@ -469,10 +469,10 @@ async function createProxy<S extends typeof BaseSandbox>(
 
   let twinId: string
   try {
-    await setupVeris(instance, {
+    await setupProxy(instance, {
       apiKey: p.coords.apiKey, environmentId: p.environmentId, apiBase: p.coords.apiBase,
     })
-    twinId = await legacyVerisSandboxId(instance)
+    twinId = await proxySandboxId(instance)
   } catch (err) {
     // Kill the E2B sandbox; the in-box twin (if it came up) is reclaimed by TTL.
     await instance.kill().catch(() => {})

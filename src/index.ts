@@ -31,27 +31,3 @@ export {
 } from './errors'
 export type { VerisErrorPhase } from './errors'
 export { SDK_VERSION } from './version'
-
-// ---- Deprecated v1 free-function surface (proxy mode) --------------------
-// Kept working for v1 callers; each JSDoc names its class equivalent. These
-// operate on plain e2b Sandbox instances, as they always did.
-export {
-  withVeris,
-  setupVeris,
-  startVeris,
-  wakeVeris,
-  verisReady,
-  verisTrustEnv,
-  verisSandboxId,
-  verisReceipt,
-  verisDataPlaneEnv,
-  verisTeardown,
-  resolveBinary,
-} from './legacy/functions'
-export type {
-  WithVerisOpts,
-  SetupVerisOpts,
-  StartVerisOpts,
-  VerisReceiptOpts,
-  LegacyReceiptEntry,
-} from './legacy/functions'
