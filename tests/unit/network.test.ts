@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildNetwork, vendorHosts, dataPlaneHosts } from '../../src/network'
+import { buildNetwork, vendorHosts, dataPlaneHosts, dataPlaneEnv } from '../../src/network'
 import type { EgressCredential, ServiceInfo } from '../../src/control-plane'
 
 const cred: EgressCredential = {
@@ -56,5 +56,27 @@ describe('dataPlaneHosts — real DSN shapes', () => {
   })
   it('allows every host of a multi-host DSN', () => {
     expect(dataPlaneHosts([svc('mongodb://u:p@m1:27017,m2:27017/db')])).toEqual(['m1', 'm2'])
+  })
+})
+
+describe('dataPlaneEnv — the env NAME is control-plane input', () => {
+  const svc = (env_hint: string, url = 'postgresql://u:p@pg.veris.ai:5432/db') =>
+    ({ name: 'dp', status: 'ready', url, control_url: 'https://x', env_hint, routes: null })
+
+  it('injects a conventional hint', () => {
+    expect(dataPlaneEnv([svc('DATABASE_URL')])).toEqual({ DATABASE_URL: 'postgresql://u:p@pg.veris.ai:5432/db' })
+  })
+  it('refuses process-controlling names', () => {
+    for (const bad of ['PATH', 'NODE_OPTIONS', 'BASH_ENV', 'LD_PRELOAD', 'PYTHONPATH']) {
+      expect(dataPlaneEnv([svc(bad)])).toEqual({})
+    }
+  })
+  it('refuses malformed names', () => {
+    for (const bad of ['lower', '1LEADING', 'HAS-DASH', 'HAS SPACE', 'X'.repeat(65)]) {
+      expect(dataPlaneEnv([svc(bad)])).toEqual({})
+    }
+  })
+  it('ignores http services (they are not a data plane)', () => {
+    expect(dataPlaneEnv([svc('API_URL', 'https://x/s/1/stripe')])).toEqual({})
   })
 })

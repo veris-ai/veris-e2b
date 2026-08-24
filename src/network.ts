@@ -65,9 +65,24 @@ function hostsFromDsn(dsn: string): string[] {
 export function dataPlaneEnv(services: ServiceInfo[]): Record<string, string> {
   const envs: Record<string, string> = {}
   for (const svc of services) {
-    if (svc.env_hint && svc.url && !isHttpUrl(svc.url)) envs[svc.env_hint] = svc.url
+    if (!svc.env_hint || !svc.url || isHttpUrl(svc.url)) continue
+    // The env NAME comes from the control plane and is injected into every
+    // command, so it is shape-checked before use: a response naming PATH,
+    // NODE_OPTIONS or BASH_ENV would otherwise steer the sandbox's processes.
+    if (!isSafeEnvName(svc.env_hint)) continue
+    envs[svc.env_hint] = svc.url
   }
   return envs
+}
+
+/** Env names a data-plane hint may claim: conventional SCREAMING_SNAKE, and
+ *  never one of the process-controlling variables. */
+const PROCESS_CONTROLLING = new Set([
+  'PATH', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'NODE_OPTIONS', 'BASH_ENV', 'ENV',
+  'PYTHONPATH', 'PYTHONSTARTUP', 'SHELL', 'IFS', 'HOME', 'PROMPT_COMMAND',
+])
+export function isSafeEnvName(name: string): boolean {
+  return /^[A-Z][A-Z0-9_]{0,63}$/.test(name) && !PROCESS_CONTROLLING.has(name)
 }
 
 /** The caller's STATIC allowOut entries; a selector callback contributes none. */

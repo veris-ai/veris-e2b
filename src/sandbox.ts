@@ -154,6 +154,7 @@ export class Sandbox extends BaseSandbox {
       warnProxyFallback('mode: "proxy"')
       return createProxy(this, {
         template, opts, coords, controlPlane, environmentId: coords.environmentId!, egress, allowOut,
+        dataPlaneEnv: v.dataPlaneEnv !== false,
       })
     }
 
@@ -233,6 +234,7 @@ export class Sandbox extends BaseSandbox {
     warnProxyFallback('gateway mode unavailable')
     return createProxy(this, {
       template, opts, coords, controlPlane, environmentId: coords.environmentId!, egress, allowOut,
+      dataPlaneEnv: v.dataPlaneEnv !== false,
     })
   }
 
@@ -462,7 +464,7 @@ async function createProxy<S extends typeof BaseSandbox>(
   Ctor: S,
   p: {
     template?: string; opts: SandboxOpts; coords: ResolvedCoordinates; controlPlane: ControlPlane
-    environmentId: string; egress: EgressMode; allowOut: string[]
+    environmentId: string; egress: EgressMode; allowOut: string[]; dataPlaneEnv: boolean
   },
 ): Promise<InstanceType<S>> {
   // Proxy mode deploys its twin from inside the sandbox via veris-proxy. The
@@ -483,8 +485,11 @@ async function createProxy<S extends typeof BaseSandbox>(
     })
     twinId = await proxySandboxId(instance)
   } catch (err) {
-    // Kill the E2B sandbox; the in-box twin (if it came up) is reclaimed by TTL.
-    await instance.kill().catch(() => {})
+    // The Veris surface isn't attached yet, so the overridden kill() would not
+    // run the proxy teardown — stop the proxy explicitly (it deletes the twin it
+    // deployed) before killing the VM. TTL is the backstop either way.
+    await proxyTeardown(instance).catch(() => {})
+    await (instance as BaseSandbox).kill().catch(() => {})
     throw err
   }
   attachVeris(instance, {
