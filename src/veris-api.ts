@@ -6,7 +6,7 @@ import type { ControlPlane, ServiceInfo } from './control-plane'
 import { fetchReceiptEntry, probeCanary } from './receipt'
 import type { Receipt, ReceiptEntry, ReceiptLeak } from './receipt'
 import { VerisUntouchedError, VerisError } from './errors'
-import { buildNetwork } from './network'
+import { buildNetwork, callerStaticAllowOut, dataPlaneEnv, isHttpUrl } from './network'
 import type { EgressMode } from './network'
 import { vendoredTrustEnv } from './trust'
 import { proxyTrustEnv } from './proxy-mode'
@@ -50,8 +50,6 @@ export interface VerisApi {
   getTrustEnv(): Promise<Record<string, string>>
   updateNetwork(net: SandboxNetworkUpdate & { detachVeris?: boolean }): Promise<void>
 }
-
-const isHttpUrl = (u: string) => /^https?:/.test(u)
 
 export class VerisApiImpl implements VerisApi {
   constructor(private readonly ctx: VerisContext) {}
@@ -117,12 +115,7 @@ export class VerisApiImpl implements VerisApi {
   }
 
   async getDataPlaneEnv(): Promise<Record<string, string>> {
-    const services = await this.services()
-    const envs: Record<string, string> = {}
-    for (const svc of services) {
-      if (svc.env_hint && svc.url && !isHttpUrl(svc.url)) envs[svc.env_hint] = svc.url
-    }
-    return envs
+    return dataPlaneEnv(await this.services())
   }
 
   async getTrustEnv(): Promise<Record<string, string>> {
@@ -153,8 +146,7 @@ export class VerisApiImpl implements VerisApi {
     // Fold the caller's static allowOut into the rebuilt allowlist rather than
     // letting `base` overwrite it — dropping their hosts would silently break
     // whatever egress they were adding.
-    const callerAllow = Array.isArray(rest.allowOut)
-      ? rest.allowOut.filter((x): x is string => typeof x === 'string') : []
+    const callerAllow = callerStaticAllowOut(rest)
     const services = await this.services()
     const base = buildNetwork({ credential, services, mode: this.ctx.egress, allowOut: [...this.ctx.allowOut, ...callerAllow] })
     await this.ctx.sandbox.updateNetwork({ ...rest, ...base })

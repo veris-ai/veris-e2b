@@ -16,7 +16,6 @@
   "sideEffects": false,
   "files": [
     "dist",
-    "assets",
     "README.md"
   ],
   "engines": {
@@ -27,10 +26,12 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:live": "vitest run --config vitest.live.config.ts",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "dev": "tsup --watch",
+    "example": "node examples/quickstart.mjs"
   },
   "dependencies": {
-    "e2b": "~2.45.0"
+    "e2b": "^2.45.0"
   },
   "keywords": [
     "veris",
@@ -50,5 +51,13 @@
     "tsup": "^8.5.1",
     "typescript": "^7.0.2",
     "vitest": "^3.2.7"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/veris-ai/veris-e2b#readme",
+  "bugs": {
+    "url": "https://github.com/veris-ai/veris-e2b/issues"
+  },
+  "author": "Veris AI"
 }

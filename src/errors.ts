@@ -12,7 +12,6 @@ export type VerisErrorPhase =
   | 'canary'
   | 'receipt'
   | 'connect'
-  | 'teardown'
 
 /**
  * Base class for every error this package throws. Deliberately NOT a subclass

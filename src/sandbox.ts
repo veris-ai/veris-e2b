@@ -19,7 +19,7 @@ import { ControlPlane } from './control-plane'
 import type { EgressCredential, TwinSandbox } from './control-plane'
 import { VerisApiImpl } from './veris-api'
 import type { VerisApi, VerisContext } from './veris-api'
-import { buildNetwork } from './network'
+import { buildNetwork, callerStaticAllowOut, dataPlaneEnv } from './network'
 import type { EgressMode } from './network'
 import { CA_CERT_PATH, CA_INSTALL_CMD, CA_TOOLING_PROBE, sanitizeTrustEnv } from './trust'
 import { probeCanary } from './receipt'
@@ -102,6 +102,9 @@ const META = {
 /** All keys the class reserves in E2B metadata. */
 const VERIS_META_KEYS: readonly string[] = Object.values(META)
 
+/** Twin TTL backstop for an E2B timeout: outlive the sandbox by 10 minutes. */
+const ttlMinutesFor = (timeoutMs: number) => Math.max(10, Math.ceil(timeoutMs / 60_000) + 10)
+
 function warnProxyFallback(reason: string): void {
   process.emitWarning(
     `@veris-ai/e2b: using in-sandbox proxy mode (${reason}). Interception is the legacy ` +
@@ -158,7 +161,7 @@ export class Sandbox extends BaseSandbox {
     // vendor-host list and SOCKS credential. Everything from here is wrapped so
     // any failure deletes the twin we created (only the TTL backstop otherwise).
     const ownsTwin = !v.attachSandboxId
-    const ttlMinutes = v.ttlMinutes ?? Math.max(10, Math.ceil((opts.timeoutMs ?? 300_000) / 60_000) + 10)
+    const ttlMinutes = v.ttlMinutes ?? ttlMinutesFor(opts.timeoutMs ?? 300_000)
     let twin: TwinSandbox
     if (v.attachSandboxId) {
       const existing = await controlPlane.getTwin(v.attachSandboxId)
@@ -294,7 +297,7 @@ export class Sandbox extends BaseSandbox {
     if (mode === 'gateway') {
       const credential = await controlPlane.mintEgressCredential(twin.environment_id, twinId)
       if (credential) {
-        const services = await controlPlane.services(twinId)
+        const services = twin.services?.length ? twin.services : await controlPlane.services(twinId)
         await instance.updateNetwork(buildNetwork({ credential, services, mode: egress, allowOut }))
         await writeCa(instance, credential.ca_pem)
         await probeCanary(instance, credential.canary_host, twinId, CA_CERT_PATH)
@@ -315,7 +318,7 @@ export class Sandbox extends BaseSandbox {
    *  harmlessly longer-lived twin — never a live sandbox whose twin expires
    *  under it. */
   override async setTimeout(timeoutMs: number, opts?: Parameters<BaseSandbox['setTimeout']>[1]): Promise<void> {
-    const ttlMinutes = Math.max(10, Math.ceil(timeoutMs / 60_000) + 10)
+    const ttlMinutes = ttlMinutesFor(timeoutMs)
     // Swallow transient extend failures, but let a dead twin surface — extending
     // the E2B sandbox to outlive a twin that is already gone is the one case the
     // caller must hear about.
@@ -343,12 +346,13 @@ export class Sandbox extends BaseSandbox {
 
   /** Kill the E2B sandbox AND delete the Veris twin (unless it was attached). */
   override async kill(opts?: Parameters<BaseSandbox['kill']>[0]): Promise<boolean> {
-    if (this.verisMode === 'proxy') {
-      await proxyTeardown(this).catch(() => {})
-    }
-    if (this._verisOwnsTwin) {
-      await this._verisControlPlane.deleteTwin(this._verisEnvironmentId, this.verisSandboxId).catch(() => {})
-    }
+    // Independent: the in-sandbox proxy stop and the control-plane delete.
+    await Promise.all([
+      this.verisMode === 'proxy' ? proxyTeardown(this).catch(() => {}) : undefined,
+      this._verisOwnsTwin
+        ? this._verisControlPlane.deleteTwin(this._verisEnvironmentId, this.verisSandboxId).catch(() => {})
+        : undefined,
+    ])
     return super.kill(opts)
   }
 }
@@ -357,6 +361,15 @@ export default Sandbox
 
 // ---- module-level helpers (kept off the class so the subclass static side
 //      stays assignable to e2b's Sandbox — private statics would break it) ----
+
+/** `BaseSandbox.create` with or without a template, bound to the subclass. */
+function baseCreate<S extends typeof BaseSandbox>(
+  Ctor: S, template: string | undefined, opts: BaseSandboxOpts,
+): Promise<InstanceType<S>> {
+  return template !== undefined
+    ? (BaseSandbox.create as (t: string, o: BaseSandboxOpts) => Promise<InstanceType<S>>).call(Ctor, template, opts)
+    : (BaseSandbox.create as (o: BaseSandboxOpts) => Promise<InstanceType<S>>).call(Ctor, opts)
+}
 
 function attachVeris(instance: BaseSandbox, ctx: Omit<VerisContext, 'sandbox'>): void {
   const veris = new VerisApiImpl({ ...ctx, sandbox: instance })
@@ -386,7 +399,8 @@ async function createGateway<S extends typeof BaseSandbox>(
       'network.egressProxy cannot be set on a Veris gateway-mode sandbox — Veris owns the egress proxy (pass extra allowances via veris.allowOut)',
       { phase: 'e2b-create', verisSandboxId: p.twin.id })
   }
-  const services = await p.controlPlane.services(p.twin.id)
+  // The twin payload already carries its services; only refetch if it didn't.
+  const services = p.twin.services?.length ? p.twin.services : await p.controlPlane.services(p.twin.id)
   const verisNet = buildNetwork({
     // Fold any static allowOut the caller put on opts.network into the builder,
     // so their extra hosts survive rather than being silently dropped.
@@ -402,11 +416,10 @@ async function createGateway<S extends typeof BaseSandbox>(
   const trustEnv = sanitizeTrustEnv(p.credential.trust_env)
   // Veris-managed vars WIN over caller envs — a caller value for a data-plane
   // env_hint (e.g. DATABASE_URL) would silently point tests at production.
-  const verisManaged: Record<string, string> = { ...(p.installCaOpt ? trustEnv : {}), VERIS_SANDBOX_ID: p.twin.id }
-  if (p.dataPlaneEnv) {
-    for (const svc of services) {
-      if (svc.env_hint && svc.url && !/^https?:/.test(svc.url)) verisManaged[svc.env_hint] = svc.url
-    }
+  const verisManaged: Record<string, string> = {
+    ...(p.installCaOpt ? trustEnv : {}),
+    ...(p.dataPlaneEnv ? dataPlaneEnv(services) : {}),
+    VERIS_SANDBOX_ID: p.twin.id,
   }
   const mergedEnvs = { ...(p.opts.envs ?? {}), ...verisManaged }
   const metadata = {
@@ -419,9 +432,7 @@ async function createGateway<S extends typeof BaseSandbox>(
   const baseOpts: BaseSandboxOpts = { ...stripVeris(p.opts), envs: mergedEnvs, network, metadata }
   let instance: InstanceType<S>
   try {
-    instance = p.template !== undefined
-      ? await (BaseSandbox.create as (t: string, o: BaseSandboxOpts) => Promise<InstanceType<S>>).call(Ctor, p.template, baseOpts)
-      : await (BaseSandbox.create as (o: BaseSandboxOpts) => Promise<InstanceType<S>>).call(Ctor, baseOpts)
+    instance = await baseCreate(Ctor, p.template, baseOpts)
   } catch (cause) {
     // Twin cleanup is owned by create()'s wrapper; here we only failed to make
     // the E2B sandbox, so there is nothing else to tear down.
@@ -463,9 +474,7 @@ async function createProxy<S extends typeof BaseSandbox>(
     [META.ownsTwin]: 'true',
   }
   const baseOpts: BaseSandboxOpts = { ...stripVeris(p.opts), metadata }
-  const instance = p.template !== undefined
-    ? await (BaseSandbox.create as (t: string, o: BaseSandboxOpts) => Promise<InstanceType<S>>).call(Ctor, p.template, baseOpts)
-    : await (BaseSandbox.create as (o: BaseSandboxOpts) => Promise<InstanceType<S>>).call(Ctor, baseOpts)
+  const instance = await baseCreate(Ctor, p.template, baseOpts)
 
   let twinId: string
   try {
@@ -483,12 +492,6 @@ async function createProxy<S extends typeof BaseSandbox>(
     egress: p.egress, allowOut: p.allowOut, ownsTwin: true,
   })
   return instance
-}
-
-/** Static allowOut entries the caller put on opts.network, if it's an array. */
-function callerStaticAllowOut(net: SandboxNetworkOpts | undefined): string[] {
-  const a = net?.allowOut
-  return Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : []
 }
 
 /** Strip any Veris-reserved keys a caller tried to set in metadata. */

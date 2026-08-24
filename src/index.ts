@@ -17,7 +17,7 @@ export type { SandboxOpts, SandboxConnectOpts, VerisOpts, VerisMode } from './sa
 export type { VerisApi, TouchMatcher } from './veris-api'
 export type { Receipt, ReceiptEntry, ReceiptRequest, ReceiptLeak } from './receipt'
 export type { EgressMode } from './network'
-export type { ServiceInfo as VerisServiceInfo, RouteEntry, EgressCredential } from './control-plane'
+export type { ServiceInfo as VerisServiceInfo, RouteEntry } from './control-plane'
 export {
   VerisError,
   MissingCredentialsError,

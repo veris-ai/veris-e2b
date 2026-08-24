@@ -6,7 +6,8 @@ import type { EgressCredential, ServiceInfo } from './control-plane'
 
 export type EgressMode = 'strict' | 'open'
 
-const isHttpUrl = (u: string) => /^https?:/.test(u)
+/** A service whose `url` is an HTTP endpoint (vs a wire-protocol DSN). */
+export const isHttpUrl = (u: string) => /^https?:/.test(u)
 
 /** Vendor hostnames the twin answers for, from the live routes the control plane serves. */
 export function vendorHosts(services: ServiceInfo[]): string[] {
@@ -56,6 +57,25 @@ function hostsFromDsn(dsn: string): string[] {
   return out
 }
 
+/**
+ * `{ [env_hint]: dsn }` for the twin's non-HTTP data planes — the env the code
+ * under test reads (e.g. DATABASE_URL). Sibling of dataPlaneHosts: same field,
+ * one derivation, so a new service type changes one place.
+ */
+export function dataPlaneEnv(services: ServiceInfo[]): Record<string, string> {
+  const envs: Record<string, string> = {}
+  for (const svc of services) {
+    if (svc.env_hint && svc.url && !isHttpUrl(svc.url)) envs[svc.env_hint] = svc.url
+  }
+  return envs
+}
+
+/** The caller's STATIC allowOut entries; a selector callback contributes none. */
+export function callerStaticAllowOut(net: { allowOut?: unknown } | undefined): string[] {
+  const a = net?.allowOut
+  return Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : []
+}
+
 export interface BuildNetworkArgs {
   credential: EgressCredential
   services: ServiceInfo[]
@@ -80,7 +100,7 @@ export function buildNetwork(args: BuildNetworkArgs): SandboxNetworkOpts {
     ...extra,
     ...dataPlaneHosts(services),
   ]
-  if (mode === 'open') allowOut.push('0.0.0.0/0')
+  if (mode === 'open') allowOut.push(ALL_TRAFFIC)
   return {
     denyOut: [ALL_TRAFFIC],
     allowOut: [...new Set(allowOut)],

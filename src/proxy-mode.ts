@@ -9,7 +9,15 @@ import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import type { Sandbox, CommandResult } from 'e2b'
 
-const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets')
+// tsup's publicDir copies assets into dist/ beside the built module; running
+// from source they live at ../assets. Resolve per file so both layouts work
+// and no '..' traversal out of dist/ is required in the published package.
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
+
+function assetPath(name: string): string {
+  const beside = path.join(MODULE_DIR, name)
+  return fs.existsSync(beside) ? beside : path.join(MODULE_DIR, '..', 'assets', name)
+}
 
 // A pooled Buffer's .buffer can be larger than the content; slice exactly.
 const toArrayBuffer = (buf: Buffer): ArrayBuffer =>
@@ -87,7 +95,7 @@ export async function setupProxy(sandbox: Sandbox, opts: SetupProxyOpts): Promis
     'apt-get update -qq && apt-get install -y -qq nftables ca-certificates',
     { user: 'root', timeoutMs: 180_000 })
 
-  const asset = (name: string) => toArrayBuffer(fs.readFileSync(path.join(ASSETS, name)))
+  const asset = (name: string) => toArrayBuffer(fs.readFileSync(assetPath(name)))
   await sandbox.files.write([
     { path: '/usr/local/bin/veris-proxy', data: toArrayBuffer(fs.readFileSync(binaryPath)) },
     { path: '/etc/veris/redirect.nft', data: asset('redirect.nft') },
