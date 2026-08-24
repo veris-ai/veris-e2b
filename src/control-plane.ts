@@ -44,6 +44,13 @@ export interface EgressCredential {
   trust_env?: Record<string, string>
 }
 
+/** Mutable fields of a running twin. An OMITTED key is left alone; an explicit
+ *  null is a value (client_base_url: null unregisters). */
+export interface SandboxPatch {
+  ttl_minutes?: number
+  client_base_url?: string | null
+}
+
 export interface ControlPlaneOpts {
   apiKey: string
   apiBase: string
@@ -163,13 +170,22 @@ export class ControlPlane {
     return this.json<EgressCredential>(res, `mint egress credential for ${sandboxId}`, 'credential-mint')
   }
 
+  /** PATCH the twin resource. Omitted fields are untouched by the server. */
+  async updateSandbox(environmentId: string, sandboxId: string, patch: SandboxPatch): Promise<void> {
+    const res = await this.request('PATCH', `/v1/environments/${environmentId}/sandboxes/${sandboxId}`, patch)
+    if (res.status === 404) {
+      throw new TwinExpiredError(`Veris sandbox ${sandboxId} not found`, { verisSandboxId: sandboxId })
+    }
+    if (!res.ok) await this.json(res, `update sandbox ${sandboxId}`)
+  }
+
   /** Extend a twin's TTL so it stays in lockstep with an extended E2B sandbox. */
   async extendTtl(environmentId: string, sandboxId: string, ttlMinutes: number): Promise<void> {
     const res = await this.request('PATCH', `/v1/environments/${environmentId}/sandboxes/${sandboxId}`, { ttl_minutes: ttlMinutes })
     if (res.status === 404) {
       throw new TwinExpiredError(`Veris sandbox ${sandboxId} not found — cannot extend TTL`, { verisSandboxId: sandboxId })
     }
-    // 405 = control plane predates the TTL-extend contract: tolerated, the
+    // 405 = a control plane that does not accept this field yet: tolerated, the
     // original TTL keeps its backstop role and kill() still cleans up.
     if (!res.ok && res.status !== 405) await this.json(res, `extend TTL of ${sandboxId}`)
   }

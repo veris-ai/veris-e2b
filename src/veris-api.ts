@@ -49,6 +49,14 @@ export interface VerisApi {
   getDataPlaneEnv(): Promise<Record<string, string>>
   getTrustEnv(): Promise<Record<string, string>>
   updateNetwork(net: SandboxNetworkUpdate & { detachVeris?: boolean }): Promise<void>
+  deliverTo(port: number, opts?: DeliverToOpts): Promise<string>
+  deliverTo(url: string | null, opts?: DeliverToOpts): Promise<string | null>
+}
+
+export interface DeliverToOpts {
+  /** Verify the destination is actually reachable from the twin before
+   *  returning, via each service's /veris/client/probe. Default true. */
+  probe?: boolean
 }
 
 export class VerisApiImpl implements VerisApi {
@@ -123,6 +131,50 @@ export class VerisApiImpl implements VerisApi {
     // vendored paths don't exist there, so read the real one from the sandbox.
     if (this.ctx.mode === 'proxy') return proxyTrustEnv(this.ctx.sandbox)
     return this.ctx.trustEnv ?? vendoredTrustEnv()
+  }
+
+  /**
+   * Point every mocked vendor's callbacks/webhooks at this sandbox.
+   *
+   * Pass a PORT your app listens on and it resolves the sandbox's own public
+   * URL (`sbx.getHost(port)`) — the address a vendor would POST to in
+   * production. Pass a full URL to use that instead, or null to unregister.
+   *
+   * One call covers every service: a sandbox has ONE client, so the control
+   * plane fans the destination out to all of them.
+   *
+   * The sandbox must accept public traffic for the twin to reach it — create
+   * it with `allowPublicTraffic: true` if your app is going to receive
+   * webhooks.
+   */
+  deliverTo(port: number, opts?: DeliverToOpts): Promise<string>
+  deliverTo(url: string | null, opts?: DeliverToOpts): Promise<string | null>
+  async deliverTo(target: number | string | null, opts: DeliverToOpts = {}): Promise<string | null> {
+    const url = typeof target === 'number'
+      ? `https://${this.ctx.sandbox.getHost(target)}`
+      : target
+    await this.ctx.controlPlane.updateSandbox(
+      this.ctx.environmentId, this.ctx.twinId, { client_base_url: url })
+    if (url !== null && opts.probe !== false) await this.probeDelivery(url)
+    return url
+  }
+
+  /** Ask each service to re-probe the registered destination; throw if none can reach it. */
+  private async probeDelivery(url: string): Promise<void> {
+    const services = (await this.services()).filter((s) => isHttpUrl(s.control_url))
+    if (!services.length) return
+    const probes = await Promise.all(services.map(async (svc) => {
+      try {
+        const res = await fetch(`${svc.control_url}/veris/client/probe`, { method: 'POST' })
+        return res.ok ? await res.json() as { answered?: boolean } : null
+      } catch { return null }
+    }))
+    if (!probes.some((p) => p?.answered)) {
+      throw new VerisError(
+        `no service could reach ${url} — is your app listening, and was the sandbox ` +
+        `created with allowPublicTraffic: true?`,
+        { phase: 'receipt', verisSandboxId: this.ctx.twinId, responseBody: probes })
+    }
   }
 
   /**
