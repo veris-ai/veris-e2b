@@ -14,7 +14,7 @@ export * from 'e2b'
 
 export { Sandbox, default } from './sandbox'
 export type { SandboxOpts, SandboxConnectOpts, VerisOpts, VerisMode } from './sandbox'
-export type { VerisApi, TouchMatcher } from './veris-api'
+export type { VerisApi, TouchMatcher, DeliverToOpts } from './veris-api'
 export type { Receipt, ReceiptEntry, ReceiptRequest, ReceiptLeak } from './receipt'
 export type { EgressMode } from './network'
 export type { ServiceInfo as VerisServiceInfo, RouteEntry } from './control-plane'

@@ -65,6 +65,24 @@ Full API reference and the vendor catalog: [docs.veris.ai](https://docs.veris.ai
 
 ---
 
+## Webhooks
+
+If your app *receives* callbacks from a vendor, tell the mocks where to deliver
+them. One call covers every service:
+
+```ts
+const sbx = await Sandbox.create({ allowPublicTraffic: true })
+await sbx.commands.run('node app.js', { background: true })  // listening on :3000
+
+await sbx.veris.deliverTo(3000)   // → https://3000-<id>.e2b.app
+```
+
+`deliverTo` resolves the sandbox's own public URL — the address a vendor would
+POST to in production — registers it with every mocked service, and verifies
+they can actually reach it before returning. Pass a full URL instead of a port
+to use your own (a tunnel, say), or `null` to unregister. The sandbox must be
+created with `allowPublicTraffic: true` for the mocks to reach it.
+
 ## The `sbx.veris` API
 
 Everything this package adds lives on one accessor, alongside e2b's own
@@ -77,6 +95,7 @@ await sbx.veris.assertTouched('stripe')     // throws if it was never called
 await sbx.veris.services()                  // what's running in this sandbox
 await sbx.veris.getDataPlaneEnv()           // { DATABASE_URL: 'postgresql://…' }
 await sbx.veris.getTrustEnv()               // CA paths, for processes that scrub env
+await sbx.veris.deliverTo(3000)             // send webhooks to this sandbox
 
 sbx.verisSandboxId                          // the Veris sandbox backing this one
 sbx.verisMode                               // 'gateway' | 'proxy'
