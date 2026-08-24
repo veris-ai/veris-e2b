@@ -1,157 +1,144 @@
-# @veris-ai/e2b
+# Veris SDK for E2B
 
-Run your integration tests and agent-generated code against **Veris dependency
-sandboxes** — stateful, contract-accurate twins of Stripe, Google, and the rest
-of your vendor stack — from inside **E2B sandboxes**, with the code under test
-completely unmodified. `veris-proxy` reroutes outbound HTTPS at the kernel;
-your code keeps its production hostnames, credentials, and SDKs, and the Veris
-sandbox's **receipt** proves what it actually received.
+Run your code in an [E2B](https://e2b.dev) sandbox where calls to
+`api.stripe.com`, `www.googleapis.com`, and the rest of your vendor stack are
+answered by **Veris dependency sandboxes** — stateful, contract-accurate mocks —
+with the code under test completely unmodified.
 
-## No template needed to start
+No base-URL overrides, no injected config. Your code keeps its production
+hostnames, credentials, and SDKs; the network layer does the rest.
 
-Any running E2B sandbox — the default `base` or one from a template you
-already have — can be Veris-ized at runtime, no build step:
+## 1. Install
 
-```js
-import { Sandbox } from 'e2b'
-import { setupVeris, verisReceipt, verisTeardown } from '@veris-ai/e2b'
-
-const sbx = await Sandbox.create()                 // plain base sandbox
-await setupVeris(sbx, {
-  apiKey: VERIS_API_KEY,
-  environmentId: VERIS_ENVIRONMENT_ID,
-})                                                 // ~25s: install, CA, proxy, twin
-// ...run tests, read receipts, verisTeardown(sbx)
+```bash
+npm i @veris-ai/e2b
 ```
 
-The template path below moves that setup into a snapshot so every sandbox
-skips it (~1s instead of ~25s) and never runs setup as root. Start with
-`setupVeris`; graduate to `withVeris` when you're running loops.
+This package re-exports everything from `e2b`, so it's the only one you need.
 
-## The template path
+## 2. Get your keys
 
-One function layers all of it onto any E2B template:
+| Variable | Where from |
+|---|---|
+| `E2B_API_KEY` | [e2b.dev/dashboard](https://e2b.dev/dashboard) |
+| `VERIS_API_KEY` | your Veris dashboard |
+| `VERIS_ENVIRONMENT_ID` | a Veris environment — it decides which vendor services your sandbox gets |
 
-```js
-import { Template } from 'e2b'
-import { withVeris } from '@veris-ai/e2b'
+```bash
+export E2B_API_KEY=e2b_…
+export VERIS_API_KEY=…
+export VERIS_ENVIRONMENT_ID=…
+```
 
-const template = withVeris(
-  Template().fromTemplate('my-base-template'),   // everything you already have
+## 3. Run code against mocked vendors
+
+```ts
+import { Sandbox } from '@veris-ai/e2b'
+
+const sbx = await Sandbox.create()
+
+// api.stripe.com is answered by your Veris mock — the code never knows.
+const res = await sbx.commands.run(
+  'curl -sS https://api.stripe.com/v1/customers -u sk_test_veris:'
 )
-await Template.build(template, { alias: 'my-app-veris' })
-```
+console.log(res.stdout)
 
-Then every run:
-
-```js
-import { Sandbox } from 'e2b'
-import { startVeris, verisTrustEnv, verisReceipt, verisTeardown } from '@veris-ai/e2b'
-
-const sbx = await Sandbox.create('my-app-veris')
-await startVeris(sbx, { apiKey: VERIS_API_KEY, environmentId: VERIS_ENVIRONMENT_ID })
-
-const envs = await verisTrustEnv(sbx)                      // JVM truststore, CA paths…
-await sbx.commands.run('cd ~/repo && npm test', { user: 'user', envs })
-
-const receipt = await verisReceipt(sbx, { apiKey: VERIS_API_KEY })
-// receipt.stripe.requests === 0 with green tests? The tests never touched
-// Stripe. Don't trust that green.
-
-await verisTeardown(sbx)                                   // deletes the per-run Veris sandbox
 await sbx.kill()
 ```
 
-## How it works
+## 4. Check the receipt
 
-An E2B template is a snapshot of a **running** VM. `withVeris` adds layers that
-install nftables and the proxy, create a dedicated unprivileged `veris` user
-(uid 14741 — the kernel redirect's exemption), and set a start command that
-installs the redirect, mints and trusts a CA, and then parks a tiny
-supervisor. The snapshot captures all of it: every sandbox cloned from the
-template boots (~1s) with interception pre-wired in its kernel, and **no run
-ever uses root**.
+A test suite that quietly stopped calling its dependency prints the same output
+as one that works. The receipt is how you tell them apart:
 
-Waking the supervisor starts `veris-proxy serve` as the `veris` user; the
-proxy deploys a fresh Veris sandbox for the run (hermetic state, deleted at
-teardown, TTL backstop), and every mapped vendor hostname your code dials —
-`api.stripe.com`, `www.googleapis.com` — is answered by its twin. Unmapped
-hosts (package registries, your own APIs) pass through untouched.
+```ts
+// throws unless the service actually saw a matching request
+await sbx.veris.assertTouched('stripe', { method: 'POST', path: '/v1/charges' })
 
-## Zero-touch mode (per-customer templates)
-
-Bake the coordinates and clones need **no commands at all** — the supervisor
-detects the snapshot resume by wall-clock jump and starts itself:
-
-```js
-const template = withVeris(Template().fromTemplate('acme-base'), {
-  environmentId: 'acme-vendor-env',     // this template ↔ this Veris environment
-  apiKey: process.env.VERIS_API_KEY,    // PRIVATE templates only — lives in the snapshot
-})
-// later: Sandbox.create('acme-veris') → intercepting ~13s later, zero setup calls
+const receipt = await sbx.veris.receipt()
+console.log(receipt.services.stripe?.requests) // → 3
 ```
 
-The values ride a root-owned `/etc/veris/baked.env` (0600) — not `setEnvs`,
-because template env vars don't survive the supervisor's sudo hop and
-create-time envs never reach snapshot-resumed processes. `startVeris`
-(run.env) still overrides per clone. Key rotation = rebuild (cheap, cached).
+## 5. Check out docs
 
-## Publishing a public template?
+Full API reference and the vendor catalog: [docs.veris.ai](https://docs.veris.ai).
 
-Pass `mintCaAtBoot: true`. It moves CA minting from build time to each
-clone's first wake (~1–2s), so a published template carries **no shared CA
-private key**. Never publish a template built with a baked `apiKey`.
+---
+
+## The `sbx.veris` API
+
+Everything this package adds lives on one accessor, alongside e2b's own
+`sbx.commands` and `sbx.files`:
+
+```ts
+await sbx.veris.receipt()                   // all services: counts + typed requests
+await sbx.veris.receipt('stripe')           // one service
+await sbx.veris.assertTouched('stripe')     // throws if it was never called
+await sbx.veris.services()                  // what's running in this sandbox
+await sbx.veris.getDataPlaneEnv()           // { DATABASE_URL: 'postgresql://…' }
+await sbx.veris.getTrustEnv()               // CA paths, for processes that scrub env
+
+sbx.verisSandboxId                          // the Veris sandbox backing this one
+sbx.verisMode                               // 'gateway' | 'proxy'
+```
 
 ## Options
 
-| `withVeris(template, opts)` | |
-|---|---|
-| `binaryPath` | optional override; default resolution: `$VERIS_PROXY_BINARY` → `~/.cache/veris-e2b/` → public release URL → `gh release download` |
-| `environmentId` | bake the Veris environment id (per-customer pattern) |
-| `apiKey` | bake the key too → zero-touch clones (private templates only) |
-| `apiBase` | non-default Veris control plane |
-| `mintCaAtBoot` | per-clone CA — required before publishing publicly |
-| `startCmd` | your template's own start command, chained before the supervisor (must exit or background) |
-
-Runtime helpers: `startVeris(sbx, {…})`, `verisReady(sbx)`, `verisTrustEnv(sbx)`,
-`verisSandboxId(sbx)`, `verisReceipt(sbx, {…})`, `verisTeardown(sbx)`.
-
-## Baking services into a template
-
-`startCmd` runs before the supervisor and the two are chained with `&&`, so
-wait for a service you bake in rather than only starting it — a start command
-that ends in `; true` can snapshot with the service down:
-
-```js
-startCmd: 'sudo service postgresql start && for i in $(seq 1 30); do pg_isready -q && break; sleep 1; done && pg_isready -q'
+```ts
+const sbx = await Sandbox.create({
+  timeoutMs: 15 * 60_000,        // any e2b option works
+  veris: {
+    environmentId: '…',          // default: VERIS_ENVIRONMENT_ID
+    apiKey: '…',                 // default: VERIS_API_KEY
+    mode: 'auto',                // 'auto' | 'gateway' | 'proxy'
+    egress: 'strict',            // 'strict' | 'open'
+    allowOut: ['registry.npmjs.org'],  // extra hosts your code may reach
+  },
+})
 ```
 
-Debian's Postgres enables SSL against a snakeoil certificate that is missing
-in an E2B build, so the cluster never starts; run `pg_conftool 15 main set ssl
-off` before the first start (see `examples/build-medusa-fixer.mjs`). The start
-command runs as the guest user, so `service … start` needs `sudo`.
+**`mode`** picks how interception happens. `gateway` routes egress through a
+Veris-operated proxy — nothing runs inside your sandbox. `proxy` runs the
+interceptor inside the sandbox instead, which works anywhere including
+self-hosted E2B. `auto` (the default) uses the gateway when it's available and
+falls back to the proxy.
 
-## The two rules
+**`egress`** is `strict` by default: only your vendor hosts, `allowOut`
+additions, and data planes can leave the sandbox. Use `open` to let everything
+out (npm, pip, GitHub) at the cost of two blind spots the receipt annotates.
 
-1. **Never point the code at Veris.** No base-URL overrides. The proxy is the
-   mechanism; the code path you test is the code path that ships.
-2. **Never trust green without the receipt.** A suite that quietly stopped
-   calling its dependency prints the same output as a working one.
+## Using a template
 
-## Requirements
+Any E2B template works — pass it as the first argument:
 
-- E2B account (the template builds on E2B's infra; sandboxes need nothing special)
-- `VERIS_API_KEY` + a Veris environment naming your vendor services
-- The `veris-proxy` linux-amd64 binary ≥ v0.5.0 (the nftables fallback E2B's
-  kernel needs shipped in v0.5.0; route serving in v0.6.0)
+```ts
+const sbx = await Sandbox.create('my-template', { veris: { environmentId } })
+```
 
-## Publish checklist (maintainers)
+## Limitations
 
-- [ ] Make `veris-proxy` release binaries publicly downloadable (repo public, or
-      push to a public bucket / `install.veris.ai`) → drop the `binaryPath`
-      requirement and download at build via `runCmd`
-- [ ] `npm publish` under `@veris-ai` (this package is dependency-free; `e2b` is a peer)
-- [ ] PyPI mirror (`veris-e2b`) for the Python Template SDK
-- [ ] Publish a public trial template (`mintCaAtBoot`, no baked key) via `e2b template publish`
-- [ ] PR an example into `e2b-dev/e2b-cookbook` (precedent: their Claude Code template example)
-- [ ] Verify `fromTemplate()` start-command chaining semantics on a customer-style base
+- **`fork()` is not supported.** Forked sandboxes would share one Veris sandbox
+  and corrupt each other's receipts; it throws instead.
+- **Clients that pin their own CA bundle** (some vendor SDKs ship one and ignore
+  the system trust store) need to be pointed at `/etc/ssl/certs/ca-certificates.crt`.
+- **HTTP/2 and WebSockets on mocked hosts** are not yet handled in gateway mode;
+  HTTP/1.1 over TLS is. Non-mocked hosts are unaffected.
+
+## Development
+
+```bash
+npm install
+npm run build      # tsup (ESM+CJS) + tsc (declarations)
+npm test           # unit tests — mocked, no account needed
+npm run typecheck
+```
+
+Live tests need real credentials and are opt-in:
+
+```bash
+VERIS_E2E=proxy npm run test:live
+```
+
+## License
+
+Apache-2.0
