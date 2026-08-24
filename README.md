@@ -1,128 +1,144 @@
-# @veris-ai/e2b
+# Veris SDK for E2B
 
-Run your integration tests and agent-generated code against **Veris dependency
-sandboxes** — stateful, contract-accurate twins of Stripe, Google, and the rest
-of your vendor stack — from inside **E2B sandboxes**, with the code under test
-completely unmodified. Your code keeps its production hostnames, credentials,
-and SDKs; the calls to `api.stripe.com` are answered by your Veris twin; and the
-twin's **receipt** proves what it actually received.
+Run your code in an [E2B](https://e2b.dev) sandbox where calls to
+`api.stripe.com`, `www.googleapis.com`, and the rest of your vendor stack are
+answered by **Veris dependency sandboxes** — stateful, contract-accurate mocks —
+with the code under test completely unmodified.
 
-`@veris-ai/e2b` is a drop-in subclass of the E2B `Sandbox` — the same shape as
-[`@e2b/code-interpreter`](https://github.com/e2b-dev/code-interpreter). You
-install one package and import `Sandbox` from it.
+No base-URL overrides, no injected config. Your code keeps its production
+hostnames, credentials, and SDKs; the network layer does the rest.
+
+## 1. Install
+
+```bash
+npm i @veris-ai/e2b
+```
+
+This package re-exports everything from `e2b`, so it's the only one you need.
+
+## 2. Get your keys
+
+| Variable | Where from |
+|---|---|
+| `E2B_API_KEY` | [e2b.dev/dashboard](https://e2b.dev/dashboard) |
+| `VERIS_API_KEY` | your Veris dashboard |
+| `VERIS_ENVIRONMENT_ID` | a Veris environment — it decides which vendor services your sandbox gets |
+
+```bash
+export E2B_API_KEY=e2b_…
+export VERIS_API_KEY=…
+export VERIS_ENVIRONMENT_ID=…
+```
+
+## 3. Run code against mocked vendors
 
 ```ts
-// npm i @veris-ai/e2b
-// Required env: E2B_API_KEY, VERIS_API_KEY, VERIS_ENVIRONMENT_ID
 import { Sandbox } from '@veris-ai/e2b'
 
 const sbx = await Sandbox.create()
-try {
-  // No base-URL override, no proxy config — https://api.stripe.com is answered
-  // by your Veris twin, invisibly.
-  const r = await sbx.commands.run('curl -sS https://api.stripe.com/v1/customers -u sk_test_veris:')
-  console.log(r.stdout)
 
-  await sbx.veris.assertTouched('stripe')   // never trust green without the receipt
-} finally {
-  await sbx.kill()                           // kills the E2B sandbox AND deletes the twin
-}
+// api.stripe.com is answered by your Veris mock — the code never knows.
+const res = await sbx.commands.run(
+  'curl -sS https://api.stripe.com/v1/customers -u sk_test_veris:'
+)
+console.log(res.stdout)
+
+await sbx.kill()
 ```
 
-## Two doctrines
+## 4. Check the receipt
 
-1. **Never point your code at Veris.** No base-URL overrides, no injected
-   config. Interception is done by the network layer; the code path you test is
-   the code path that ships.
-2. **Never trust green without the receipt.** A suite that quietly stopped
-   calling its dependency prints the same output as a working one.
-   `sbx.veris.assertTouched('stripe')` is that check as one line.
+A test suite that quietly stopped calling its dependency prints the same output
+as one that works. The receipt is how you tell them apart:
 
-## Status — what is verified today
+```ts
+// throws unless the service actually saw a matching request
+await sbx.veris.assertTouched('stripe', { method: 'POST', path: '/v1/charges' })
 
-This package is `2.0.0-alpha`: the class API and **proxy mode** are the
-supported surface; **gateway mode** is implemented client-side but its
-server-side gateway does not exist yet, so it cannot run end to end.
+const receipt = await sbx.veris.receipt()
+console.log(receipt.services.stripe?.requests) // → 3
+```
 
-| Capability | State |
-|---|---|
-| `Sandbox` class (`create`/`connect`/`kill`/`setTimeout`), `sbx.veris.*` | **Verified** against dev |
-| Proxy mode (in-sandbox `veris-proxy`) | **Verified** — the in-sandbox mechanism, class-shaped |
-| Receipts, `assertTouched`, data-plane env, trust env | **Verified** |
-| Gateway mode — control plane (twin → `egress-credential` → CA) | **Verified** live in dev |
-| Gateway mode — BYOP tunnel + gateway TLS-MITM | **Deployed in dev; the interception itself is unproven** — needs E2B BYOP access + a real sandbox. `mode: 'gateway'` throws `VerisGatewayNotOfferedError` where the control plane doesn't offer it |
+## 5. Check out docs
 
-`mode: 'auto'` (the default) uses gateway mode when the control plane offers it
-to this SDK version and the post-create canary proves the tunnel is live;
-otherwise it falls back to proxy mode with a loud warning, because the two modes
-have different trust properties (see [Modes](#modes)).
+Full API reference and the vendor catalog: [docs.veris.ai](https://docs.veris.ai).
 
-## The `sbx.veris` surface
+---
 
-Everything this package adds hangs off one namespaced accessor, matching E2B's
-own `sbx.commands` / `sbx.files` idiom so a future E2B minor can never collide
-with a generic name:
+## The `sbx.veris` API
 
-| Call | What it does |
-|---|---|
-| `sbx.veris.receipt()` | Full receipt: per service, the count and typed list of intercepted requests, `mode`, `integrity`, and (open mode) `leaks`. In gateway mode it runs the canary first and throws if egress is no longer tunneled. |
-| `sbx.veris.receipt('stripe')` | Just that service's entry. |
-| `sbx.veris.assertTouched('stripe')` | Throws `VerisUntouchedError` unless the service saw ≥1 intercepted request. Optional matcher: `assertTouched('stripe', { method: 'POST', path: '/v1/charges', minRequests: 1 })`. |
-| `sbx.veris.services()` | The twin's services (name, url, controlUrl, envHint, routes). |
-| `sbx.veris.getDataPlaneEnv()` | `{ [envHint]: dsn }` for non-HTTP twins (e.g. `DATABASE_URL`). Injected at create; exposed for processes that scrub their env. |
-| `sbx.veris.getTrustEnv()` | CA-trust env map (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, …). Injected at create. |
+Everything this package adds lives on one accessor, alongside e2b's own
+`sbx.commands` and `sbx.files`:
 
-`sbx.verisSandboxId` and `sbx.verisMode` are top-level conveniences (the twin id
-and `'gateway' | 'proxy'`), handy for asserting the mode in CI.
+```ts
+await sbx.veris.receipt()                   // all services: counts + typed requests
+await sbx.veris.receipt('stripe')           // one service
+await sbx.veris.assertTouched('stripe')     // throws if it was never called
+await sbx.veris.services()                  // what's running in this sandbox
+await sbx.veris.getDataPlaneEnv()           // { DATABASE_URL: 'postgresql://…' }
+await sbx.veris.getTrustEnv()               // CA paths, for processes that scrub env
 
-## Modes
+sbx.verisSandboxId                          // the Veris sandbox backing this one
+sbx.verisMode                               // 'gateway' | 'proxy'
+```
 
-**Proxy mode** (verified today) runs `veris-proxy` inside the sandbox as an
-unprivileged user; an nftables redirect sends tcp/80+443 to it, and it MITMs
-with a locally minted CA. The API key reaches the sandbox during setup and root
-is exempt from the redirect — properties that matter for your threat model.
+## Options
 
-**Gateway mode** (pending infra) runs nothing Veris in the sandbox. E2B's
-native egress ([BYOP](https://docs.e2b.dev/network/byop)) tunnels vendor
-hostnames through a Veris-operated SOCKS5 gateway that MITMs them and answers
-from your twin; unmapped hosts (npm, GitHub, your own APIs) pass through
-untouched. The only in-sandbox footprint is one CA file. A post-create
-**canary** proves egress is actually tunneled before any receipt is trusted, so
-an E2B account without the BYOP beta flag can never masquerade as a working
-sandbox.
+```ts
+const sbx = await Sandbox.create({
+  timeoutMs: 15 * 60_000,        // any e2b option works
+  veris: {
+    environmentId: '…',          // default: VERIS_ENVIRONMENT_ID
+    apiKey: '…',                 // default: VERIS_API_KEY
+    mode: 'auto',                // 'auto' | 'gateway' | 'proxy'
+    egress: 'strict',            // 'strict' | 'open'
+    allowOut: ['registry.npmjs.org'],  // extra hosts your code may reach
+  },
+})
+```
 
-Choosing:
+**`mode`** picks how interception happens. `gateway` routes egress through a
+Veris-operated proxy — nothing runs inside your sandbox. `proxy` runs the
+interceptor inside the sandbox instead, which works anywhere including
+self-hosted E2B. `auto` (the default) uses the gateway when it's available and
+falls back to the proxy.
 
-- `mode: 'auto'` (default) — gateway when available, else proxy (loud warning).
-- `mode: 'gateway'` — require gateway; throw if unavailable.
-- `mode: 'proxy'` — require proxy (also the right choice for self-hosted E2B,
-  which cannot offer BYOP).
+**`egress`** is `strict` by default: only your vendor hosts, `allowOut`
+additions, and data planes can leave the sandbox. Use `open` to let everything
+out (npm, pip, GitHub) at the cost of two blind spots the receipt annotates.
 
-### Egress policy (gateway mode)
+## Using a template
 
-- `egress: 'strict'` (default) — deny-all plus an allowlist of your vendor
-  hosts, `veris.allowOut` additions, and data-plane endpoints. QUIC/HTTP3 and
-  ECH fail closed, so the receipt has no known blind spots. This is the default
-  because "never trust green without the receipt" only holds when the receipt
-  can see everything.
-- `egress: 'open'` — adds a `0.0.0.0/0` catch-all so npm/pip/GitHub work with
-  zero config, at the cost of two receipt blind spots (a QUIC/HTTP3 or ECH
-  client can reach a real vendor without the receipt seeing it). `receipt()`
-  annotates these in its `leaks` field. Use strict if your workload speaks
-  HTTP/3 or ECH toward a mocked vendor.
+Any E2B template works — pass it as the first argument:
 
-## Examples
+```ts
+const sbx = await Sandbox.create('my-template', { veris: { environmentId } })
+```
 
-- [`examples/quickstart.mjs`](examples/quickstart.mjs) — the loop above, runnable.
-- [`examples/full-loop.mjs`](examples/full-loop.mjs) — clone, `npm ci`, test, prove, tear down.
+## Limitations
+
+- **`fork()` is not supported.** Forked sandboxes would share one Veris sandbox
+  and corrupt each other's receipts; it throws instead.
+- **Clients that pin their own CA bundle** (some vendor SDKs ship one and ignore
+  the system trust store) need to be pointed at `/etc/ssl/certs/ca-certificates.crt`.
+- **HTTP/2 and WebSockets on mocked hosts** are not yet handled in gateway mode;
+  HTTP/1.1 over TLS is. Non-mocked hosts are unaffected.
 
 ## Development
 
-```sh
+```bash
 npm install
-npm run build      # tsup (JS) + tsc (declarations)
-npm test           # unit tests (mocked; no E2B/Veris account needed)
+npm run build      # tsup (ESM+CJS) + tsc (declarations)
+npm test           # unit tests — mocked, no account needed
 npm run typecheck
 ```
 
-Live tests that touch real E2B + Veris live under `tests/live/` and are opt-in.
+Live tests need real credentials and are opt-in:
+
+```bash
+VERIS_E2E=proxy npm run test:live
+```
+
+## License
+
+Apache-2.0
