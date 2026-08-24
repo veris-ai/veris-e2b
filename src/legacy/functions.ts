@@ -1,36 +1,44 @@
-// @veris-ai/e2b — the Veris interception layer for E2B sandboxes.
+// Legacy v1 surface: the in-sandbox proxy machinery (proxy mode).
 //
 // Build time:  withVeris(template, opts)  — layer veris-proxy, its kernel
 //              redirect, and a snapshot-parked supervisor onto ANY template.
-// Run time:    startVeris / verisReady / verisTrustEnv / verisReceipt —
-//              drive a Veris-layered sandbox and prove what it intercepted.
+// Run time:    setupVeris / startVeris / verisReady / verisTrustEnv /
+//              verisReceipt — drive a Veris-layered sandbox and prove what it
+//              intercepted.
 //
 // Everything here was verified against real E2B infrastructure (Aug 2026):
 // rules and supervisor survive the template snapshot; clones run rootless.
+// The class API (../sandbox.ts) reuses these internals for `mode: 'proxy'`;
+// the free functions remain exported, deprecated, for v1 callers.
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { waitForFile } from 'e2b'
+import type { Sandbox, TemplateBuilder, CommandResult } from 'e2b'
 
 const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets')
 
-const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`
+const shq = (v: string) => `'${String(v).replace(/'/g, `'\\''`)}'`
+
+// A pooled Buffer's .buffer can be larger than the content; slice exactly.
+const toArrayBuffer = (buf: Buffer): ArrayBuffer =>
+  buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
 
 // The proxy release this package version is tested against.
 const PROXY = { repo: 'veris-ai/veris-proxy', version: 'v0.6.2', asset: 'veris-proxy-linux-amd64' }
 
 /**
- * Find the veris-proxy binary. binaryPath is now an OVERRIDE, not a
+ * Find the veris-proxy binary. binaryPath is an OVERRIDE, not a
  * requirement — the default resolution chain:
- *   1. opts.binaryPath
+ *   1. explicit binaryPath
  *   2. $VERIS_PROXY_BINARY
  *   3. the package cache (~/.cache/veris-e2b/<version>/)
  *   4. the public release URL (starts working the day releases go public)
  *   5. `gh release download` (works today for anyone with repo access)
  */
-function resolveBinary(explicit) {
+export function resolveBinary(explicit?: string): string {
   if (explicit) {
     if (!fs.existsSync(explicit)) throw new Error(`binaryPath ${explicit} does not exist`)
     return explicit
@@ -61,34 +69,30 @@ function resolveBinary(explicit) {
     `  - download ${PROXY.asset} from the ${PROXY.repo} ${PROXY.version} release.`)
 }
 
+export interface WithVerisOpts {
+  /** Override the proxy binary. Default resolution: $VERIS_PROXY_BINARY → package cache → public release URL → `gh release download`. */
+  binaryPath?: string
+  /** 'local' (default): resolve on this machine and upload as a layer. 'remote': the E2B build fetches the pinned release itself. */
+  binarySource?: 'local' | 'remote'
+  /** Bake the Veris environment id → template is pre-wired (per-customer pattern). */
+  environmentId?: string
+  /** Bake the API key too → zero-touch clones. Private templates only. */
+  apiKey?: string
+  /** Non-default Veris control plane URL. */
+  apiBase?: string
+  /** Defer CA minting to each clone's first wake. REQUIRED before publishing a template publicly. */
+  mintCaAtBoot?: boolean
+  /** The template's own start command to chain before the Veris supervisor. */
+  startCmd?: string
+}
+
 /**
- * Layer Veris interception onto any Build System 2.0 template.
- *
- * @param {import('e2b').TemplateBase} template  e.g. Template().fromTemplate('my-base')
- * @param {object} opts
- * @param {string} [opts.binaryPath]    Override the proxy binary. Default resolution:
- *                                      $VERIS_PROXY_BINARY → package cache → public
- *                                      release URL → `gh release download`.
- * @param {string} [opts.binarySource]  'local' (default): resolve on this machine and
- *                                      upload as a layer. 'remote': the E2B build
- *                                      downloads the pinned release itself — no local
- *                                      binary, no upload. Remote requires the
- *                                      veris-proxy release to be publicly
- *                                      downloadable (dormant until then).
- * @param {string} [opts.environmentId] Bake the Veris environment id → template is
- *                                      pre-wired (per-customer pattern).
- * @param {string} [opts.apiKey]        Bake the API key too → zero-touch clones.
- *                                      Private templates only: the key lives in the
- *                                      stored snapshot; rotation = rebuild.
- * @param {string} [opts.apiBase]       Non-default Veris control plane URL.
- * @param {boolean} [opts.mintCaAtBoot] Defer CA minting to each clone's first wake.
- *                                      REQUIRED before publishing a template publicly,
- *                                      so clones don't share one CA private key.
- * @param {string} [opts.startCmd]      The template's own start command to chain
- *                                      before the Veris supervisor (it must exit or
- *                                      background itself; the supervisor parks).
+ * Layer Veris interception onto any Build System 2.0 template (proxy mode).
+ * @deprecated Gateway mode needs no template layering — build a plain e2b
+ * template and use `Sandbox.create('tpl', { veris: {...} })`. Kept for
+ * proxy-mode templates; the class auto-detects them.
  */
-export function withVeris(template, opts = {}) {
+export function withVeris(template: TemplateBuilder, opts: WithVerisOpts = {}): TemplateBuilder {
   const { binaryPath: explicitBinary, binarySource = 'local', environmentId, apiKey, apiBase, mintCaAtBoot = false, startCmd } = opts
   const binaryPath = binarySource === 'remote' ? null : resolveBinary(explicitBinary)
 
@@ -97,7 +101,7 @@ export function withVeris(template, opts = {}) {
   // stage our assets into `.veris-e2b/` inside that context — read straight
   // off the template instance so this works wherever the customer builds.
   // Add `.veris-e2b/` to .gitignore; it's regenerated on every build.
-  const ctx = template.fileContextPath ?? process.cwd()
+  const ctx = String((template as { fileContextPath?: unknown }).fileContextPath ?? process.cwd())
   const stageAbs = path.join(ctx, '.veris-e2b')
   fs.mkdirSync(stageAbs, { recursive: true })
   for (const asset of ['redirect.nft', 'dummy.json', 'boot.sh']) {
@@ -125,8 +129,8 @@ export function withVeris(template, opts = {}) {
 
   // Baked coordinates ride a root-owned file, not env vars: template envs are
   // stripped by the supervisor's sudo hop, and create-time envs never reach a
-  // snapshot-resumed process. (Both learned the hard way; both verified.)
-  const baked = []
+  // snapshot-resumed process.
+  const baked: string[] = []
   if (apiKey) baked.push(`VERIS_API_KEY=${apiKey}`)
   if (environmentId) baked.push(`VERIS_ENVIRONMENT_ID=${environmentId}`)
   if (apiBase) baked.push(`VERIS_API_BASE=${apiBase}`)
@@ -137,21 +141,23 @@ export function withVeris(template, opts = {}) {
   if (baked.length) t = t.runCmd('chmod 600 /etc/veris/baked.env', { user: 'root' })
 
   const boot = startCmd ? `${startCmd} && bash /etc/veris/boot.sh` : 'bash /etc/veris/boot.sh'
-  return t.setStartCmd(boot, waitForFile('/veris/template-ready'))
+  return t.setStartCmd(boot, waitForFile('/veris/template-ready')) as unknown as TemplateBuilder
+}
+
+export interface SetupVerisOpts {
+  binaryPath?: string
+  apiKey: string
+  environmentId: string
+  apiBase?: string
+  timeoutSec?: number
 }
 
 /**
- * Veris-ize a RUNNING sandbox — no template, no build step. Works on the
- * default `base` template or any template you already have, unmodified.
- *
- * This is the zero-friction path: `Sandbox.create()` then `setupVeris(...)`.
- * The trade against a withVeris() template is per-sandbox setup time
- * (~60-90s: apt install + 8MB binary upload + CA mint, vs ~1s from a
- * snapshot) and the setup commands running as root inside the disposable VM
- * (the proxy itself still runs unprivileged as uid 14741 either way).
- * Loops and CI want the template; first contact and one-offs start here.
+ * Veris-ize a RUNNING sandbox — no template, no build step (proxy mode).
+ * @deprecated Use `Sandbox.create({ veris: {...} })` from this package.
  */
-export async function setupVeris(sandbox, { binaryPath: explicitBinary, apiKey, environmentId, apiBase, timeoutSec = 240 }) {
+export async function setupVeris(sandbox: Sandbox, opts: SetupVerisOpts): Promise<CommandResult> {
+  const { binaryPath: explicitBinary, apiKey, environmentId, apiBase, timeoutSec = 240 } = opts
   const binaryPath = resolveBinary(explicitBinary)
   if (!apiKey || !environmentId) {
     throw new Error('setupVeris: apiKey and environmentId are required')
@@ -161,9 +167,9 @@ export async function setupVeris(sandbox, { binaryPath: explicitBinary, apiKey, 
     'apt-get update -qq && apt-get install -y -qq nftables ca-certificates',
     { user: 'root', timeoutMs: 180_000 })
 
-  const asset = (name) => fs.readFileSync(path.join(ASSETS, name))
+  const asset = (name: string) => toArrayBuffer(fs.readFileSync(path.join(ASSETS, name)))
   await sandbox.files.write([
-    { path: '/usr/local/bin/veris-proxy', data: fs.readFileSync(binaryPath) },
+    { path: '/usr/local/bin/veris-proxy', data: toArrayBuffer(fs.readFileSync(binaryPath)) },
     { path: '/etc/veris/redirect.nft', data: asset('redirect.nft') },
     { path: '/etc/veris/dummy.json', data: asset('dummy.json') },
     { path: '/etc/veris/boot.sh', data: asset('boot.sh') },
@@ -176,30 +182,27 @@ export async function setupVeris(sandbox, { binaryPath: explicitBinary, apiKey, 
     { user: 'root' })
   // Coordinates travel as process env on the boot.sh command itself — boot.sh
   // takes its env fast-path and no secret ever touches the filesystem.
-  const bootEnvs = { VERIS_API_KEY: apiKey, VERIS_ENVIRONMENT_ID: environmentId }
+  const bootEnvs: Record<string, string> = { VERIS_API_KEY: apiKey, VERIS_ENVIRONMENT_ID: environmentId }
   if (apiBase) bootEnvs.VERIS_API_BASE = apiBase
   await sandbox.commands.run('bash /etc/veris/boot.sh', { user: 'root', background: true, envs: bootEnvs })
   return verisReady(sandbox, timeoutSec)
 }
 
+export interface StartVerisOpts {
+  apiKey?: string
+  environmentId?: string
+  apiBase?: string
+  timeoutSec?: number
+  transport?: 'env' | 'file'
+}
+
 /**
- * Start Veris in a template-built sandbox: hand over whatever coordinates the
- * template didn't bake, wait for the proxy + twin.
- *
- * Default transport is ENV: a fresh root command is spawned with the
- * coordinates in its process environment (per-command envs), so no secret
- * ever touches the filesystem — safe even for published templates and paused
- * sandboxes. Templates built with older boot.sh fall back to the run.env
- * file handshake automatically; force with { transport: 'file' }.
- *
- * Pass only what the template didn't bake — the supervisor merges baked.env
- * with these values (run.env wins). The recommended split: bake the
- * non-secret `environmentId` at build (per-customer templates pair 1:1 with
- * environments anyway) and pass only the `apiKey` here, so no secret ever
- * lives in a stored snapshot. An empty call is a pure wake trigger for
- * templates that baked everything.
+ * Start Veris in a template-built sandbox (proxy mode): hand over whatever
+ * coordinates the template didn't bake, wait for the proxy + twin.
+ * @deprecated Use `Sandbox.create('tpl', { veris: {...} })` from this package.
  */
-export async function startVeris(sandbox, { apiKey, environmentId, apiBase, timeoutSec = 240, transport = 'env' } = {}) {
+export async function startVeris(sandbox: Sandbox, opts: StartVerisOpts = {}): Promise<CommandResult> {
+  const { apiKey, environmentId, apiBase, timeoutSec = 240, transport = 'env' } = opts
   if (transport === 'env') {
     // boot.sh takes the env fast-path only when both required coordinates are
     // present in its process env (merged with the template's baked non-secrets
@@ -207,7 +210,7 @@ export async function startVeris(sandbox, { apiKey, environmentId, apiBase, time
     const probe = await sandbox.commands.run(
       'grep -q "external-start" /etc/veris/boot.sh 2>/dev/null && echo env-ok || echo legacy', { user: 'root' })
     if (probe.stdout.includes('env-ok')) {
-      const envs = {}
+      const envs: Record<string, string> = {}
       if (apiKey) envs.VERIS_API_KEY = apiKey
       if (environmentId) envs.VERIS_ENVIRONMENT_ID = environmentId
       if (apiBase) envs.VERIS_API_BASE = apiBase
@@ -215,7 +218,7 @@ export async function startVeris(sandbox, { apiKey, environmentId, apiBase, time
       return verisReady(sandbox, timeoutSec)
     }
   }
-  const lines = []
+  const lines: string[] = []
   if (apiKey) lines.push(`VERIS_API_KEY=${apiKey}`)
   if (environmentId) lines.push(`VERIS_ENVIRONMENT_ID=${environmentId}`)
   if (apiBase) lines.push(`VERIS_API_BASE=${apiBase}`)
@@ -224,7 +227,7 @@ export async function startVeris(sandbox, { apiKey, environmentId, apiBase, time
 }
 
 /** Wait until the proxy is serving and its per-run Veris sandbox is provisioned. */
-export async function verisReady(sandbox, timeoutSec = 240) {
+export async function verisReady(sandbox: Sandbox, timeoutSec = 240): Promise<CommandResult> {
   const r = await sandbox.commands.run(
     `for i in $(seq 1 ${timeoutSec}); do [ -f /veris/ready ] && exit 0; sleep 1; done; ` +
     'echo "veris-proxy never became ready:" >&2; cat /veris/boot.log /veris/serve.log >&2 2>/dev/null; exit 1',
@@ -234,18 +237,18 @@ export async function verisReady(sandbox, timeoutSec = 240) {
 }
 
 /** The trust material the code under test needs (JAVA_TOOL_OPTIONS, CA paths…), as an env object. */
-export async function verisTrustEnv(sandbox) {
+export async function verisTrustEnv(sandbox: Sandbox): Promise<Record<string, string>> {
   const r = await sandbox.commands.run('cat /veris/trust.env', { user: 'root' })
-  const envs = {}
+  const envs: Record<string, string> = {}
   for (const line of r.stdout.split('\n')) {
     const m = line.match(/^export ([A-Za-z_][A-Za-z0-9_]*)=(?:'(.*)'|"(.*)"|(.*))$/)
-    if (m) envs[m[1]] = m[2] ?? m[3] ?? m[4] ?? ''
+    if (m && m[1]) envs[m[1]] = m[2] ?? m[3] ?? m[4] ?? ''
   }
   return envs
 }
 
 /** The id of the per-run Veris sandbox this E2B sandbox's proxy deployed. */
-export async function verisSandboxId(sandbox) {
+export async function verisSandboxId(sandbox: Sandbox): Promise<string> {
   const r = await sandbox.commands.run(
     "grep -oE 'sandbox_id=[a-z0-9]+' /veris/serve.log | head -1 | cut -d= -f2", { user: 'root' })
   const id = r.stdout.trim()
@@ -253,16 +256,31 @@ export async function verisSandboxId(sandbox) {
   return id
 }
 
+export interface VerisReceiptOpts {
+  apiKey: string
+  apiBase?: string
+  service?: string
+}
+
+export interface LegacyReceiptEntry {
+  requests: number
+  control_url: string
+  raw: unknown
+}
+
 /**
  * The receipt: what the Veris sandbox actually received, per service.
  * Green tests with an empty receipt never touched the dependency — don't trust them.
+ * @deprecated Use `sbx.veris.receipt()` / `sbx.veris.assertTouched()` from this package.
  */
-export async function verisReceipt(sandbox, { apiKey, apiBase = 'https://api.veris.ai', service }) {
+export async function verisReceipt(sandbox: Sandbox, opts: VerisReceiptOpts): Promise<Record<string, LegacyReceiptEntry>> {
+  const { apiKey, apiBase = 'https://api.veris.ai', service } = opts
   const id = await verisSandboxId(sandbox)
   const services = await fetch(`${apiBase}/v1/sandboxes/${id}/services`, {
-    headers: { 'X-API-Key': apiKey } }).then((r) => r.json())
+    headers: { 'X-API-Key': apiKey } }).then((r) => r.json()) as
+    { name: string; control_url: string }[]
   const wanted = service ? services.filter((s) => s.name === service) : services
-  const receipt = {}
+  const receipt: Record<string, LegacyReceiptEntry> = {}
   for (const svc of wanted) {
     const body = await fetch(`${svc.control_url}/veris/requests`).then((r) => r.json())
     const rows = JSON.stringify(body).match(/"method"/g)
@@ -271,19 +289,21 @@ export async function verisReceipt(sandbox, { apiKey, apiBase = 'https://api.ver
   return receipt
 }
 
-
 /**
  * Env vars for the twin world's NON-HTTP services (data planes): each maps
  * its documented env_hint to its connection string — e.g. the platform's
  * `postgres` service yields { DATABASE_URL: 'postgresql://…' }. The kernel
  * redirect never touches these (not ports 80/443); the DSN is handed over the
  * same way production hands it: as configuration.
+ * @deprecated Use `sbx.veris.getDataPlaneEnv()` from this package (auto-injected at create).
  */
-export async function verisDataPlaneEnv(sandbox, { apiKey, apiBase = 'https://api.veris.ai' }) {
+export async function verisDataPlaneEnv(sandbox: Sandbox, opts: { apiKey: string; apiBase?: string }): Promise<Record<string, string>> {
+  const { apiKey, apiBase = 'https://api.veris.ai' } = opts
   const id = await verisSandboxId(sandbox)
   const services = await fetch(`${apiBase}/v1/sandboxes/${id}/services`, {
-    headers: { 'X-API-Key': apiKey } }).then((r) => r.json())
-  const envs = {}
+    headers: { 'X-API-Key': apiKey } }).then((r) => r.json()) as
+    { env_hint?: string; url?: string }[]
+  const envs: Record<string, string> = {}
   for (const svc of services) {
     if (svc.env_hint && svc.url && !/^https?:/.test(svc.url)) envs[svc.env_hint] = svc.url
   }
@@ -291,7 +311,7 @@ export async function verisDataPlaneEnv(sandbox, { apiKey, apiBase = 'https://ap
 }
 
 /** Stop the proxy so it deletes its per-run Veris sandbox (TTL is the backstop). */
-export async function verisTeardown(sandbox) {
+export async function verisTeardown(sandbox: Sandbox): Promise<void> {
   await sandbox.commands.run(
     'pkill -TERM -x veris-proxy 2>/dev/null; for i in $(seq 1 20); do pgrep -x veris-proxy >/dev/null || exit 0; sleep 1; done',
     { user: 'root' }).catch(() => {})

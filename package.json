@@ -1,13 +1,54 @@
 {
   "name": "@veris-ai/e2b",
-  "version": "0.1.0",
-  "description": "Layer Veris dependency-sandbox interception onto any E2B template: withVeris() at build time, wakeVeris()/verisReceipt() at run time. Unmodified code, kernel-level rerouting, receipts.",
+  "version": "2.0.0-alpha.1",
+  "description": "Veris dependency-sandbox interception for E2B: a drop-in Sandbox subclass whose vendor API calls are answered by stateful Veris twins. Unmodified code, real hostnames, receipts.",
   "type": "module",
-  "main": "src/index.mjs",
-  "exports": { ".": "./src/index.mjs" },
-  "files": ["src", "assets", "README.md"],
-  "peerDependencies": { "e2b": ">=2.0.0" },
-  "keywords": ["veris", "e2b", "sandbox", "integration-testing", "agents"],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "assets",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "e2b": "~2.45.0"
+  },
+  "keywords": [
+    "veris",
+    "e2b",
+    "sandbox",
+    "integration-testing",
+    "agents",
+    "mock"
+  ],
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "https://github.com/veris-ai/veris-e2b" }
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/veris-ai/veris-e2b"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsup": "^8.5.1",
+    "typescript": "^7.0.2",
+    "vitest": "^3.2.7"
+  }
 }
