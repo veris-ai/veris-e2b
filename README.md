@@ -54,94 +54,12 @@ as one that works. The receipt is how you tell them apart:
 ```ts
 // throws unless the service actually saw a matching request
 await sbx.veris.assertTouched('stripe', { method: 'POST', path: '/v1/charges' })
-
-const receipt = await sbx.veris.receipt()
-console.log(receipt.services.stripe?.requests) // → 3
 ```
 
-## 5. Check out docs
+## 5. Check out the docs
 
-Full API reference and the vendor catalog: [docs.veris.ai](https://docs.veris.ai).
-
----
-
-## Webhooks
-
-If your app *receives* callbacks from a vendor, tell the mocks where to deliver
-them. One call covers every service:
-
-```ts
-const sbx = await Sandbox.create({ allowPublicTraffic: true })
-await sbx.commands.run('node app.js', { background: true })  // listening on :3000
-
-await sbx.veris.deliverTo(3000)   // → https://3000-<id>.e2b.app
-```
-
-`deliverTo` resolves the sandbox's own public URL — the address a vendor would
-POST to in production — registers it with every mocked service, and verifies
-they can actually reach it before returning. Pass a full URL instead of a port
-to use your own (a tunnel, say), or `null` to unregister. The sandbox must be
-created with `allowPublicTraffic: true` for the mocks to reach it.
-
-## The `sbx.veris` API
-
-Everything this package adds lives on one accessor, alongside e2b's own
-`sbx.commands` and `sbx.files`:
-
-```ts
-await sbx.veris.receipt()                   // all services: counts + typed requests
-await sbx.veris.receipt('stripe')           // one service
-await sbx.veris.assertTouched('stripe')     // throws if it was never called
-await sbx.veris.services()                  // what's running in this sandbox
-await sbx.veris.getDataPlaneEnv()           // { DATABASE_URL: 'postgresql://…' }
-await sbx.veris.getTrustEnv()               // CA paths, for processes that scrub env
-await sbx.veris.deliverTo(3000)             // send webhooks to this sandbox
-
-sbx.verisSandboxId                          // the Veris sandbox backing this one
-sbx.verisMode                               // 'gateway' | 'proxy'
-```
-
-## Options
-
-```ts
-const sbx = await Sandbox.create({
-  timeoutMs: 15 * 60_000,        // any e2b option works
-  veris: {
-    environmentId: '…',          // default: VERIS_ENVIRONMENT_ID
-    apiKey: '…',                 // default: VERIS_API_KEY
-    mode: 'auto',                // 'auto' | 'gateway' | 'proxy'
-    egress: 'strict',            // 'strict' | 'open'
-    allowOut: ['registry.npmjs.org'],  // extra hosts your code may reach
-  },
-})
-```
-
-**`mode`** picks how interception happens. `gateway` routes egress through a
-Veris-operated proxy — nothing runs inside your sandbox. `proxy` runs the
-interceptor inside the sandbox instead, which works anywhere including
-self-hosted E2B. `auto` (the default) uses the gateway when it's available and
-falls back to the proxy.
-
-**`egress`** is `strict` by default: only your vendor hosts, `allowOut`
-additions, and data planes can leave the sandbox. Use `open` to let everything
-out (npm, pip, GitHub) at the cost of two blind spots the receipt annotates.
-
-## Using a template
-
-Any E2B template works — pass it as the first argument:
-
-```ts
-const sbx = await Sandbox.create('my-template', { veris: { environmentId } })
-```
-
-## Limitations
-
-- **`fork()` is not supported.** Forked sandboxes would share one Veris sandbox
-  and corrupt each other's receipts; it throws instead.
-- **Clients that pin their own CA bundle** (some vendor SDKs ship one and ignore
-  the system trust store) need to be pointed at `/etc/ssl/certs/ca-certificates.crt`.
-- **HTTP/2 and WebSockets on mocked hosts** are not yet handled in gateway mode;
-  HTTP/1.1 over TLS is. Non-mocked hosts are unaffected.
+- [API reference](docs/reference.md) — options, receipts, webhooks, modes, errors
+- [docs.veris.ai](https://docs.veris.ai) — the vendor catalog and platform docs
 
 ## Development
 
