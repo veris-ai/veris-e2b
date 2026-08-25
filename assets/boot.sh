@@ -22,8 +22,14 @@ echo "boot: $(date -u +%FT%TZ) uid=$(id -u)"
 [ -f /etc/veris/baked.env ] && MINT_CA_AT="$(. /etc/veris/baked.env; echo "${MINT_CA_AT:-build}")" || MINT_CA_AT=build
 
 mint_ca() {
+  # The mint is a throwaway serve whose only job is to write the CA, so it is
+  # driven by --config. The coordinates reach this script as process env
+  # (the default transport), and veris-proxy reads VERIS_ENVIRONMENT_ID as
+  # --environment: seeing both, it refuses ("Pick one") and no CA is written.
+  # Strip them for this subprocess only -- the real serve below still gets them.
   su veris -s /bin/bash -c \
-    '/usr/local/bin/veris-proxy serve --config /etc/veris/dummy.json \
+    'env -u VERIS_ENVIRONMENT_ID -u VERIS_API_KEY -u VERIS_API_BASE \
+       /usr/local/bin/veris-proxy serve --config /etc/veris/dummy.json \
        --ca-dir /veris/ca --ready-file /tmp/ca-ready >/dev/null 2>&1 &
      for i in $(seq 1 100); do [ -f /tmp/ca-ready ] && break; sleep 0.2; done
      kill %1 2>/dev/null; wait 2>/dev/null; true'
