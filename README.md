@@ -56,6 +56,16 @@ as one that works. The receipt is how you tell them apart:
 await sbx.veris.assertTouched('stripe', { method: 'POST', path: '/v1/charges' })
 ```
 
+## Verify it end to end
+
+`examples/verify.mjs` stands up a sandbox, reads the credentials the mocks
+publish, makes authenticated calls to `www.googleapis.com` and `api.stripe.com`,
+and asserts from the receipt that the mocks served them:
+
+```bash
+node examples/verify.mjs
+```
+
 ## 5. Check out the docs
 
 - [API reference](docs/reference.md) — options, receipts, webhooks, modes, errors
