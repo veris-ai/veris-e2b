@@ -1,4 +1,4 @@
-// Typed client for the Veris control plane (api.veris.ai). Only the routes
+// Typed client for the Veris control plane (svc.api.veris.ai). Only the routes
 // the SDK needs; shapes mirror the platform's public models.
 import { VerisError, VerisGatewayNotOfferedError, VerisGatewayUnreachableError, TwinExpiredError } from './errors'
 

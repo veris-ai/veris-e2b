@@ -27,7 +27,7 @@ const sbx = await Sandbox.create({
   veris: {
     environmentId: '…',                // default: VERIS_ENVIRONMENT_ID
     apiKey: '…',                       // default: VERIS_API_KEY
-    apiBase: 'https://api.veris.ai',   // default: VERIS_API_BASE
+    apiBase: 'https://svc.api.veris.ai',   // default: VERIS_API_BASE
     mode: 'auto',                      // 'auto' | 'gateway' | 'proxy'
     egress: 'strict',                  // 'strict' | 'open'
     allowOut: ['registry.npmjs.org'],  // extra hosts your code may reach
@@ -43,7 +43,7 @@ const sbx = await Sandbox.create({
 |---|---|---|
 | `environmentId` | `VERIS_ENVIRONMENT_ID` | Which Veris environment the mocks come from — it decides which vendor services you get. |
 | `apiKey` | `VERIS_API_KEY` | Veris credential. |
-| `apiBase` | `VERIS_API_BASE` or `https://api.veris.ai` | Control plane to talk to. |
+| `apiBase` | `VERIS_API_BASE` or `https://svc.api.veris.ai` | Control plane to talk to. |
 | `mode` | `'auto'` | How interception happens — see [modes](#interception-modes). |
 | `egress` | `'strict'` | What may leave the sandbox — see [egress policy](#egress-policy). |
 | `allowOut` | `[]` | Extra hosts or CIDRs your code may reach (npm, your own API). A hostname is interceptable; a CIDR is passed through. |
