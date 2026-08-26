@@ -18,7 +18,9 @@ const log = (m) => console.log(`[${el()}] ${m}`)
 
 const sbx = await Sandbox.create({
   timeoutMs: 15 * 60_000,
-  veris: { mode: 'proxy', apiBase: process.env.VERIS_API_BASE ?? 'https://svc.dev.api.veris.ai' },
+  // No apiBase: the SDK defaults to the Veris control plane. Point it
+  // elsewhere with VERIS_API_BASE if you run against your own deployment.
+  veris: { mode: 'proxy' },
 })
 log(`sandbox ${sbx.sandboxId} · veris ${sbx.verisSandboxId} · mode ${sbx.verisMode}`)
 
