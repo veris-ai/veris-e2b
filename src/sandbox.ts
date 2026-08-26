@@ -45,7 +45,7 @@ export interface VerisOpts {
   apiKey?: string
   /** Veris environment the per-run twin is deployed from. Falls back to process.env.VERIS_ENVIRONMENT_ID. */
   environmentId?: string
-  /** Control plane base. Falls back to process.env.VERIS_API_BASE, then 'https://api.veris.ai'. */
+  /** Control plane base. Falls back to process.env.VERIS_API_BASE, then 'https://svc.api.veris.ai'. */
   apiBase?: string
   /** Attach to an EXISTING twin instead of provisioning one (advanced). kill() will NOT delete it. */
   attachSandboxId?: string
@@ -84,7 +84,7 @@ function resolveCoordinates(v: VerisOpts, requireEnv: boolean): ResolvedCoordina
     throw new MissingCredentialsError(
       'no Veris environment: pass veris.environmentId or set VERIS_ENVIRONMENT_ID', { phase: 'credentials' })
   }
-  const apiBase = v.apiBase ?? process.env.VERIS_API_BASE ?? 'https://api.veris.ai'
+  const apiBase = v.apiBase ?? process.env.VERIS_API_BASE ?? 'https://svc.api.veris.ai'
   return { apiKey, environmentId, apiBase }
 }
 
@@ -262,7 +262,7 @@ export class Sandbox extends BaseSandbox {
         `sandbox metadata names a different Veris control plane (${metaBase}) than your configuration (${trustedBase}) — refusing to send the API key to an unverified host`,
         { phase: 'connect' })
     }
-    const apiBase = trustedBase ?? metaBase ?? 'https://api.veris.ai'
+    const apiBase = trustedBase ?? metaBase ?? 'https://svc.api.veris.ai'
     const environmentId = meta[META.envId] ?? ''
     const egress = (meta[META.egress] as EgressMode | undefined) ?? 'strict'
     const ownsTwin = meta[META.ownsTwin] !== 'false'
