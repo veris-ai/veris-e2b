@@ -1,0 +1,20 @@
+@veris-ai/e2b-opencode
+Copyright 2026 Veris AI, Inc.
+
+This product includes software developed at Daytona Platforms Inc.
+(https://www.daytona.io/).
+
+Portions of this package are derived from @daytona/opencode, licensed under the
+Apache License, Version 2.0. The following files are adaptations of that work
+and carry the original copyright notice alongside a notice of modification:
+
+  .opencode/plugin/e2b/core/logger.ts
+  .opencode/plugin/e2b/core/toast.ts
+  .opencode/plugin/e2b/core/types.ts
+  .opencode/plugin/e2b/core/project-data-storage.ts
+
+The session-lifecycle and git-synchronisation contracts implemented in
+.opencode/plugin/e2b/core/session-manager.ts, .opencode/plugin/e2b/git/ and
+.opencode/plugin/e2b/plugins/session-events.ts follow the design of that work.
+Those files are original implementations targeting E2B and note the influence
+in their headers.

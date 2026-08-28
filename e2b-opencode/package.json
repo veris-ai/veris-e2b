@@ -1,0 +1,54 @@
+{
+  "name": "@veris-ai/e2b-opencode",
+  "version": "0.1.0",
+  "description": "OpenCode plugin that runs every session in an E2B sandbox whose vendor API calls are answered by a Veris twin, with a receipt of what the vendor received.",
+  "main": "./.opencode/plugin/index.js",
+  "types": "./.opencode/plugin/index.d.ts",
+  "files": [
+    ".opencode",
+    "README.md",
+    "NOTICE"
+  ],
+  "license": "Apache-2.0",
+  "author": "Veris AI",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/veris-ai/veris-e2b.git",
+    "directory": "e2b-opencode"
+  },
+  "homepage": "https://github.com/veris-ai/veris-e2b/tree/main/e2b-opencode#readme",
+  "bugs": {
+    "url": "https://github.com/veris-ai/veris-e2b/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "e2b",
+    "veris",
+    "sandbox",
+    "integration-testing"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@veris-ai/e2b": "^2.0.0-alpha.1",
+    "@opencode-ai/plugin": "1.1.59",
+    "xdg-basedir": "^5.1.0",
+    "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

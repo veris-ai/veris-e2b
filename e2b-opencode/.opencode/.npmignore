@@ -1,0 +1,3 @@
+# Ship the compiled plugin, not its sources.
+*.ts
+!*.d.ts

@@ -9,3 +9,12 @@ medusa-receipt.json
 medusa-agent.log
 dist/
 *.tsbuildinfo
+
+# OpenCode installs its plugin runtime here; tsc emits beside the sources.
+e2b-opencode/.opencode/node_modules/
+e2b-opencode/.opencode/package.json
+e2b-opencode/.opencode/package-lock.json
+e2b-opencode/.opencode/bun.lock
+e2b-opencode/.opencode/plugin/**/*.js
+e2b-opencode/.opencode/plugin/**/*.d.ts
+e2b-opencode/.opencode/plugin/**/*.js.map
