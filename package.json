@@ -10,7 +10,9 @@
     "build": "npm run build -w @veris-ai/e2b && npm run build -w @veris-ai/e2b-opencode",
     "typecheck": "npm run typecheck -w @veris-ai/e2b && npm run typecheck -w @veris-ai/e2b-opencode",
     "test": "npm run test -w @veris-ai/e2b && npm run test -w @veris-ai/e2b-opencode",
-    "test:live": "npm run test:live -w @veris-ai/e2b"
+    "test:live": "npm run test:live -w @veris-ai/e2b",
+    "version:set": "node scripts/version.mjs",
+    "release": "npm run build && npm publish -w @veris-ai/e2b && npm publish -w @veris-ai/e2b-opencode"
   },
   "engines": {
     "node": ">=20"

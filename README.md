@@ -39,15 +39,25 @@ key. Adds a `verisReceipt` tool, because an agent that fabricated an API respons
 and one that really called it produce identical transcripts. They produce
 different receipts. See [`e2b-opencode/README.md`](./e2b-opencode/README.md).
 
+## Install
+
+```sh
+npm i @veris-ai/e2b              # the SDK
+npm i @veris-ai/e2b-opencode     # the OpenCode plugin (pulls the SDK with it)
+```
+
+Both packages version together, so a given plugin version always resolves the
+SDK it was built against.
+
 ## Working in this repo
 
 ```sh
 npm install          # links both workspaces
-npm run build
+npm run build        # must come first, see CONTRIBUTING.md
 npm run typecheck
 npm test             # unit tests for both packages
 npm run test:live    # SDK only; needs E2B_API_KEY, VERIS_API_KEY, VERIS_ENVIRONMENT_ID
 ```
 
-`@veris-ai/e2b` must reach npm before `@veris-ai/e2b-opencode` can: the plugin
-depends on it by version, and it is unpublished today.
+Releases are cut from the Actions tab — see
+[CONTRIBUTING.md](CONTRIBUTING.md#releasing).

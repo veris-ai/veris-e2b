@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Build first, and not as a matter of taste: e2b/dist/ is gitignored, and
+      # the SDK's `types` points into it. On a clean checkout the workspace link
+      # exists but the .d.ts does not, so the plugin's tsc cannot resolve
+      # @veris-ai/e2b and fails on every import of it. Typechecking before
+      # building only ever passes on a machine with a stale dist/ lying around.
+      - run: npm run build
+      # Typechecks both packages, which is what proves the plugin's imports
+      # against the SDK still resolve.
+      - run: npm run typecheck
+      - run: npm test

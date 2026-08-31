@@ -1,0 +1,147 @@
+# Publishes both packages to npm, in order.
+#
+# Run manually from the Actions tab. The version comes from e2b/package.json --
+# both packages version together, so `npm run version:set <v>` is the single
+# place it is bumped. The release flow is: bump in a PR, merge, run this. The
+# input exists only to override that in an emergency.
+#
+# Order matters: @veris-ai/e2b goes first, because @veris-ai/e2b-opencode
+# depends on it at the same version. Publishing the plugin against an SDK
+# version npm does not have yet gives anyone who installs it an unresolvable
+# dependency.
+#
+# Auth is npm trusted publishing (OIDC): configure once on npmjs.com under each
+# package's Settings -> Trusted Publisher (repo veris-ai/veris-e2b, workflow
+# release.yml). No token, no secret; npm's 2FA rules do not apply to OIDC and
+# provenance comes for free. The workflow FILENAME is part of that trust
+# contract -- renaming this file breaks publishing for both packages.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Override version (default: the version in e2b/package.json)"
+        required: false
+      dry_run:
+        description: "Build, pack and inspect, but do not publish"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # tag + GitHub release
+  id-token: write # npm trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # No registry-url: it makes setup-node write an .npmrc pinning token auth
+      # to a placeholder NODE_AUTH_TOKEN, and npm then never reaches for OIDC.
+      # The default registry is npmjs.org anyway, which is where this publishes.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      # Trusted publishing needs npm >= 11.5.1.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION='${{ inputs.version }}'
+          [ -n "$VERSION" ] || VERSION="$(jq -r .version e2b/package.json)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing @veris-ai/e2b@$VERSION and @veris-ai/e2b-opencode@$VERSION"
+
+      # An override, or a half-applied bump, can leave the two packages on
+      # different versions or the plugin depending on an SDK version that is not
+      # the one being published. Either ships a broken install.
+      - name: Both packages agree on the version
+        run: |
+          V='${{ steps.version.outputs.version }}'
+          node scripts/version.mjs "$V"
+          git diff --quiet -- e2b/package.json e2b-opencode/package.json || {
+            echo "::error::package.json versions did not match $V — run 'npm run version:set $V' and commit." >&2
+            git --no-pager diff -- e2b/package.json e2b-opencode/package.json
+            exit 1
+          }
+          DEP="$(jq -r '.dependencies["@veris-ai/e2b"]' e2b-opencode/package.json)"
+          [ "$DEP" = "^$V" ] || { echo "::error::plugin depends on $DEP, expected ^$V" >&2; exit 1; }
+
+      - name: Refuse a version npm already has
+        run: |
+          V='${{ steps.version.outputs.version }}'
+          for pkg in @veris-ai/e2b @veris-ai/e2b-opencode; do
+            if npm view "$pkg@$V" version >/dev/null 2>&1; then
+              echo "::error::$pkg@$V is already on npm. Bump with 'npm run version:set' first." >&2
+              exit 1
+            fi
+          done
+
+      # Build first: e2b/dist/ is gitignored and the SDK's `types` points into
+      # it, so on a clean checkout nothing can typecheck against @veris-ai/e2b
+      # until it has been built. It also has to precede the pack below, which
+      # asserts on files the build produces.
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+
+      # The SDK ships dist/, the plugin ships compiled .opencode/plugin. Both
+      # declare README.md in `files` and shipping without one leaves a blank npm
+      # page. The size assertion is not cosmetic: the plugin's `files` used to
+      # say `.opencode`, which swept in the nested node_modules OpenCode installs
+      # for local development and produced a 6.8 MB / 2919-file tarball.
+      - name: Pack and inspect
+        run: |
+          V='${{ steps.version.outputs.version }}'
+
+          ( cd e2b && npm pack )
+          SDK="e2b/veris-ai-e2b-$V.tgz"
+          tar -tzf "$SDK" | grep -q 'package/dist/index.js'   || { echo "::error::dist/index.js missing from the SDK tarball" >&2; exit 1; }
+          tar -tzf "$SDK" | grep -q 'package/dist/index.d.ts' || { echo "::error::type declarations missing from the SDK tarball" >&2; exit 1; }
+          tar -tzf "$SDK" | grep -q 'package/dist/boot.sh'    || { echo "::error::boot.sh missing from the SDK tarball" >&2; exit 1; }
+          tar -tzf "$SDK" | grep -q 'package/README.md'       || { echo "::error::README missing from the SDK tarball" >&2; exit 1; }
+          tar -tzf "$SDK"
+
+          ( cd e2b-opencode && npm pack )
+          PLUGIN="e2b-opencode/veris-ai-e2b-opencode-$V.tgz"
+          tar -tzf "$PLUGIN" | grep -q 'package/.opencode/plugin/index.js'                    || { echo "::error::plugin entrypoint missing from the tarball" >&2; exit 1; }
+          tar -tzf "$PLUGIN" | grep -q 'package/.opencode/plugin/e2b/tools/veris-receipt.js'  || { echo "::error::verisReceipt missing from the tarball" >&2; exit 1; }
+          tar -tzf "$PLUGIN" | grep -q 'package/README.md'                                    || { echo "::error::README missing from the plugin tarball" >&2; exit 1; }
+          ! tar -tzf "$PLUGIN" | grep -q 'node_modules'                                       || { echo "::error::the plugin tarball contains node_modules — check the 'files' array in its package.json" >&2; exit 1; }
+          SIZE=$(stat -c%s "$PLUGIN")
+          [ "$SIZE" -lt 1048576 ] || { echo "::error::plugin tarball is $SIZE bytes, over the 1 MB ceiling" >&2; exit 1; }
+          tar -tzf "$PLUGIN"
+
+      - name: Publish @veris-ai/e2b
+        if: ${{ !inputs.dry_run }}
+        working-directory: e2b
+        run: npm publish
+
+      # Second, and only after the SDK is on npm: the plugin depends on it.
+      - name: Publish @veris-ai/e2b-opencode
+        if: ${{ !inputs.dry_run }}
+        working-directory: e2b-opencode
+        run: npm publish
+
+      # After the publishes, not before: a failed publish then leaves no
+      # dangling tag or empty release to clean up.
+      - name: Tag and GitHub release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V='${{ steps.version.outputs.version }}'
+          TAG="v$V"
+          git tag "$TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" \
+            --title "v$V" \
+            --notes "$(printf '%s\n' \
+              "- https://www.npmjs.com/package/@veris-ai/e2b/v/$V" \
+              "- https://www.npmjs.com/package/@veris-ai/e2b-opencode/v/$V")"
