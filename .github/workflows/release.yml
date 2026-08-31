@@ -10,6 +10,11 @@
 # version npm does not have yet gives anyone who installs it an unresolvable
 # dependency.
 #
+# The run is re-runnable. Every step that changes something off-machine -- the
+# two publishes, the tag, the release -- checks first whether it has already
+# happened and skips if so. That is what makes "SDK published, plugin failed"
+# recoverable by pressing the button again instead of by hand.
+#
 # Auth is npm trusted publishing (OIDC): configure once on npmjs.com under each
 # package's Settings -> Trusted Publisher (repo veris-ai/veris-e2b, workflow
 # release.yml). No token, no secret; npm's 2FA rules do not apply to OIDC and
@@ -23,25 +28,37 @@ on:
       version:
         description: "Override version (default: the version in e2b/package.json)"
         required: false
+      dist_tag:
+        description: "Override the npm dist-tag (default: derived from the version)"
+        required: false
       dry_run:
         description: "Build, pack and inspect, but do not publish"
         type: boolean
         default: false
 
+# Read-only by default; the one job that needs to write escalates for itself.
 permissions:
-  contents: write # tag + GitHub release
-  id-token: write # npm trusted publishing
+  contents: read
+
+# The publish-then-tag sequence is not atomic. Two runs interleaving through it
+# is the one way to reach a state the skip-what-exists logic cannot untangle.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # tag + GitHub release
+      id-token: write # npm trusted publishing
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
       # No registry-url: it makes setup-node write an .npmrc pinning token auth
       # to a placeholder NODE_AUTH_TOKEN, and npm then never reaches for OIDC.
       # The default registry is npmjs.org anyway, which is where this publishes.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
 
@@ -50,20 +67,48 @@ jobs:
 
       - run: npm ci
 
-      - name: Resolve version
+      # Inputs reach the shell through env, never through ${{ }} interpolation
+      # into the script body -- an interpolated input is substituted before bash
+      # ever sees it, so a crafted version string would run as code.
+      - name: Resolve version and dist-tag
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_DIST_TAG: ${{ inputs.dist_tag }}
         run: |
-          VERSION='${{ inputs.version }}'
+          VERSION="$INPUT_VERSION"
           [ -n "$VERSION" ] || VERSION="$(jq -r .version e2b/package.json)"
+
+          # npm 11 implemented RFC 7: it refuses to publish a prerelease without
+          # an explicit --tag rather than silently putting it on `latest`. So the
+          # tag is not optional, and deriving it here means a bad one fails now
+          # instead of after the build, the tests and the pack have all passed.
+          TAG="$INPUT_DIST_TAG"
+          if [ -z "$TAG" ]; then
+            case "$VERSION" in
+              *-*) TAG="${VERSION#*-}"; TAG="${TAG%%.*}" ;; # 0.2.0-rc.1 -> rc
+              *)   TAG=latest ;;
+            esac
+          fi
+
+          # npm rejects a dist-tag that parses as a semver range, so `0.2.0-0`
+          # would derive the tag `0` and die at the publish step.
+          if ! [[ "$TAG" =~ ^[a-z][a-z0-9-]*$ ]]; then
+            echo "::error::derived dist-tag '$TAG' from version '$VERSION' is not a usable npm tag. Pass dist_tag explicitly, or use a prerelease identifier that starts with a letter (0.2.0-rc.1, not 0.2.0-0)." >&2
+            exit 1
+          fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Publishing @veris-ai/e2b@$VERSION and @veris-ai/e2b-opencode@$VERSION"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing @veris-ai/e2b@$VERSION and @veris-ai/e2b-opencode@$VERSION under dist-tag '$TAG'"
 
       # An override, or a half-applied bump, can leave the two packages on
       # different versions or the plugin depending on an SDK version that is not
       # the one being published. Either ships a broken install.
       - name: Both packages agree on the version
+        env:
+          V: ${{ steps.version.outputs.version }}
         run: |
-          V='${{ steps.version.outputs.version }}'
           node scripts/version.mjs "$V"
           git diff --quiet -- e2b/package.json e2b-opencode/package.json || {
             echo "::error::package.json versions did not match $V — run 'npm run version:set $V' and commit." >&2
@@ -73,20 +118,47 @@ jobs:
           DEP="$(jq -r '.dependencies["@veris-ai/e2b"]' e2b-opencode/package.json)"
           [ "$DEP" = "^$V" ] || { echo "::error::plugin depends on $DEP, expected ^$V" >&2; exit 1; }
 
-      - name: Refuse a version npm already has
+      # Per package, not all-or-nothing. The all-or-nothing version of this made
+      # a half-done release unrecoverable: once the SDK had published, the retry
+      # aborted here on the very package it had just succeeded at, and the only
+      # way out was publishing the plugin by hand or burning a version on both.
+      #
+      # `npm view pkg@version version` exits 0 with the version on stdout when
+      # published, and 1 (E404) when either that version or the whole package is
+      # absent. A network flake therefore reads as "not published" and we attempt
+      # the publish -- npm rejects a genuine duplicate with EPUBLISHCONFLICT.
+      # That is the safe direction to fail in.
+      - name: Decide what to publish
+        id: plan
+        env:
+          V: ${{ steps.version.outputs.version }}
         run: |
-          V='${{ steps.version.outputs.version }}'
-          for pkg in @veris-ai/e2b @veris-ai/e2b-opencode; do
-            if npm view "$pkg@$V" version >/dev/null 2>&1; then
-              echo "::error::$pkg@$V is already on npm. Bump with 'npm run version:set' first." >&2
-              exit 1
+          ANY=false
+          for entry in "sdk:@veris-ai/e2b" "plugin:@veris-ai/e2b-opencode"; do
+            KEY="${entry%%:*}"
+            PKG="${entry#*:}"
+            if [ -n "$(npm view "$PKG@$V" version 2>/dev/null || true)" ]; then
+              echo "publish_$KEY=false" >> "$GITHUB_OUTPUT"
+              echo "skip    $PKG@$V — already on npm"
+            else
+              echo "publish_$KEY=true" >> "$GITHUB_OUTPUT"
+              echo "publish $PKG@$V"
+              ANY=true
             fi
           done
+          [ "$ANY" = true ] || {
+            echo "::error::both packages are already on npm at $V — nothing to do. Bump with 'npm run version:set' first." >&2
+            exit 1
+          }
 
       # Build first: e2b/dist/ is gitignored and the SDK's `types` points into
       # it, so on a clean checkout nothing can typecheck against @veris-ai/e2b
       # until it has been built. It also has to precede the pack below, which
       # asserts on files the build produces.
+      #
+      # These stay unconditional on a retry: a re-run should re-prove the
+      # artifacts, and the pack assertions are the only thing standing between
+      # us and another 6.8 MB tarball.
       - run: npm run build
       - run: npm run typecheck
       - run: npm test
@@ -97,9 +169,9 @@ jobs:
       # say `.opencode`, which swept in the nested node_modules OpenCode installs
       # for local development and produced a 6.8 MB / 2919-file tarball.
       - name: Pack and inspect
+        env:
+          V: ${{ steps.version.outputs.version }}
         run: |
-          V='${{ steps.version.outputs.version }}'
-
           ( cd e2b && npm pack )
           SDK="e2b/veris-ai-e2b-$V.tgz"
           tar -tzf "$SDK" | grep -q 'package/dist/index.js'   || { echo "::error::dist/index.js missing from the SDK tarball" >&2; exit 1; }
@@ -119,29 +191,88 @@ jobs:
           tar -tzf "$PLUGIN"
 
       - name: Publish @veris-ai/e2b
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && steps.plan.outputs.publish_sdk == 'true' }}
         working-directory: e2b
-        run: npm publish
+        run: npm publish --tag "$TAG"
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
 
       # Second, and only after the SDK is on npm: the plugin depends on it.
       - name: Publish @veris-ai/e2b-opencode
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && steps.plan.outputs.publish_plugin == 'true' }}
         working-directory: e2b-opencode
-        run: npm publish
+        run: npm publish --tag "$TAG"
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+
+      # The whole point of publishing through OIDC rather than by hand is the
+      # attestation, and nothing else in this run would notice if it were
+      # missing -- a publish that quietly fell back to plain auth looks
+      # identical here. So assert the receipt. Only for what this run published:
+      # anything skipped above was published earlier, possibly by hand, and is
+      # not this run's claim to make.
+      - name: Provenance landed
+        if: ${{ !inputs.dry_run }}
+        env:
+          V: ${{ steps.version.outputs.version }}
+          PUBLISHED_SDK: ${{ steps.plan.outputs.publish_sdk }}
+          PUBLISHED_PLUGIN: ${{ steps.plan.outputs.publish_plugin }}
+        run: |
+          for entry in "$PUBLISHED_SDK:@veris-ai/e2b" "$PUBLISHED_PLUGIN:@veris-ai/e2b-opencode"; do
+            DID="${entry%%:*}"
+            PKG="${entry#*:}"
+            [ "$DID" = true ] || { echo "skip $PKG — not published by this run"; continue; }
+
+            # The registry can lag its own publish by a beat.
+            ATT=""
+            for _ in 1 2 3 4 5; do
+              ATT="$(npm view "$PKG@$V" --json 2>/dev/null | jq -r '.dist.attestations.url // empty')"
+              [ -z "$ATT" ] || break
+              sleep 5
+            done
+            [ -n "$ATT" ] || {
+              echo "::error::$PKG@$V published without a provenance attestation — the OIDC path did not do what it should have." >&2
+              exit 1
+            }
+            echo "$PKG@$V attested: $ATT"
+          done
 
       # After the publishes, not before: a failed publish then leaves no
-      # dangling tag or empty release to clean up.
+      # dangling tag or empty release to clean up. Each half checks whether it
+      # already exists, so a re-run of a release that got this far finishes
+      # cleanly instead of failing on its own tag.
       - name: Tag and GitHub release
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.version.outputs.version }}
         run: |
-          V='${{ steps.version.outputs.version }}'
           TAG="v$V"
-          git tag "$TAG"
-          git push origin "$TAG"
-          gh release create "$TAG" \
-            --title "v$V" \
-            --notes "$(printf '%s\n' \
-              "- https://www.npmjs.com/package/@veris-ai/e2b/v/$V" \
-              "- https://www.npmjs.com/package/@veris-ai/e2b-opencode/v/$V")"
+
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "local tag $TAG already exists"
+          else
+            git tag "$TAG"
+          fi
+
+          if git ls-remote --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "remote tag $TAG already exists"
+          else
+            git push origin "$TAG"
+          fi
+
+          # A prerelease is marked as one on GitHub too, so it does not become
+          # the "Latest release" the repo page points people at.
+          PRERELEASE=()
+          case "$V" in *-*) PRERELEASE=(--prerelease) ;; esac
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists"
+          else
+            gh release create "$TAG" \
+              --title "v$V" \
+              "${PRERELEASE[@]}" \
+              --notes "$(printf '%s\n' \
+                "- https://www.npmjs.com/package/@veris-ai/e2b/v/$V" \
+                "- https://www.npmjs.com/package/@veris-ai/e2b-opencode/v/$V")"
+          fi

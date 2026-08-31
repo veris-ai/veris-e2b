@@ -62,6 +62,15 @@ develop against it. That directory must never reach the tarball: `files` in
 release workflow fails the build if `node_modules` appears in the pack or the
 tarball crosses 1 MB.
 
+`@opencode-ai/plugin` is a devDependency, not a runtime one: every import of it
+is an `import type`, and OpenCode injects the real API at runtime. Shipping it as
+a runtime dependency would force a second, stale copy of the OpenCode SDK on
+every consumer. It is *also* an optional `peerDependency` at `>=1.18`, which is
+the only thing in the manifest that says which host versions this plugin works
+against -- OpenCode has no `engines`-style field to declare it with. The peer
+range is documentation; nothing enforces it at install time, so move it when the
+plugin starts relying on a newer host API.
+
 ## Releasing
 
 Both packages version together, and the plugin depends on an exact-minor range
@@ -75,10 +84,42 @@ git commit -am "chore: 0.2.0"  # PR, merge
 ```
 
 Then: **Actions → release → Run workflow**. It re-derives the version from
-`e2b/package.json`, refuses a version npm already has, builds, packs and inspects
-both tarballs, publishes both to npm in dependency order, then tags `v0.2.0` and
+`e2b/package.json`, decides which packages still need publishing, builds, packs
+and inspects both tarballs, publishes to npm in dependency order, checks that
+each publish came back with a provenance attestation, then tags `v0.2.0` and
 creates the GitHub release. `dry_run: true` does everything except the two
-publishes and the release.
+publishes, the attestation check and the release.
+
+There is deliberately no local publish path. The workflow is the only way either
+package reaches npm, which is what makes the provenance attestation on every
+published version mean something.
+
+### Re-running a failed release
+
+Press the button again. Every step that changes something off-machine checks
+first whether it has already happened: a package already on npm at that version
+is skipped, an existing tag is not re-created, an existing GitHub release is left
+alone. So the bad case -- the SDK publishes and the plugin then fails -- is
+recovered by re-running, not by publishing the plugin by hand.
+
+The one thing the workflow still refuses is a version where *both* packages are
+already published: there is nothing left to do, and you want a bump, not a
+re-run. Build, typecheck, test and the pack assertions re-run unconditionally, so
+a retry re-proves the artifacts rather than trusting the first attempt's.
+
+### Prereleases
+
+`version:set` accepts them (`npm run version:set 0.2.0-rc.1`) and the workflow
+derives the npm dist-tag from the version: `0.2.0` publishes to `latest`,
+`0.2.0-rc.1` to `rc`, `0.2.0-alpha.3` to `alpha`. This is not a nicety -- npm 11
+refuses to publish a prerelease without an explicit `--tag` rather than silently
+putting it on `latest`, so a bare publish of an rc simply fails.
+
+Use a prerelease identifier that starts with a letter. npm rejects a dist-tag
+that parses as a semver range, so `0.2.0-0` derives the tag `0` and the workflow
+stops at the resolve step rather than after the build. The `dist_tag` input
+overrides the derivation when you need something else -- publishing a backport
+under `legacy`, say, without moving `latest`.
 
 Publishing is npm **trusted publishing** (OIDC) -- no token, no secret. It is
 configured per package on npmjs.com under Settings → Trusted Publisher, pinned to
