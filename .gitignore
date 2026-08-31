@@ -18,3 +18,7 @@ e2b-opencode/.opencode/bun.lock
 e2b-opencode/.opencode/plugin/**/*.js
 e2b-opencode/.opencode/plugin/**/*.d.ts
 e2b-opencode/.opencode/plugin/**/*.js.map
+
+# npm pack output, produced by the release workflow and by hand when checking
+# what actually ships.
+*.tgz
