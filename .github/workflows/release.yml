@@ -135,9 +135,13 @@ jobs:
       # check for exactly this reason -- skip what is published, publish the
       # rest -- which is what makes their publish safe to re-run blindly.
       #
-      # Failing only when *both* are already up keeps the original intent: you
-      # cannot dispatch a version that has fully shipped and be told it
-      # released. That case means someone forgot to bump.
+      # "Nothing left to publish" is not by itself an error. A run that
+      # published both packages and then failed on a later step -- the
+      # provenance check, the tag -- leaves exactly that state, and the re-run
+      # that finishes it must be allowed through. This step only refuses when
+      # the release is complete in every respect: both packages up, the tag
+      # pushed and the GitHub release created. That is the case that means
+      # someone forgot to bump.
       #
       # `npm view pkg@ver version` exits 0 with a version on stdout when it is
       # published and 1 (E404) when the version or the package is absent. Only
@@ -151,6 +155,8 @@ jobs:
       - name: What is left to publish
         id: plan
         if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           V='${{ steps.version.outputs.version }}'
           LEFT=0
@@ -174,10 +180,20 @@ jobs:
             fi
           done
 
-          if [ "$LEFT" -eq 0 ]; then
-            echo "::error::nothing to do — both packages are already on npm at $V. Bump with 'npm run version:set' first." >&2
+          [ "$LEFT" -eq 0 ] || exit 0
+
+          # Both are up. Whether that is an error depends on the rest of the
+          # release: if the tag and its GitHub release are also there, the
+          # version is fully shipped and this dispatch is a mistake. If either
+          # is missing, an earlier run died after its publishes and this one is
+          # here to finish the job.
+          TAG="v$V"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1 \
+             && gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::nothing to do — $V is fully released: both packages on npm, tag $TAG and its GitHub release both present. Bump with 'npm run version:set' first." >&2
             exit 1
           fi
+          echo "::notice::both packages are already on npm at $V — continuing, to finish the tag and GitHub release an earlier run left behind"
 
       # Build first: e2b/dist/ is gitignored and the SDK's `types` points into
       # it, so on a clean checkout nothing can typecheck against @veris-ai/e2b
@@ -266,16 +282,39 @@ jobs:
       # it so a silently degraded release fails the run instead of shipping and
       # looking fine. Only for what this run published -- a package skipped
       # above was attested, or not, by an earlier run.
+      # Polls rather than asserting once, because npm ingests a publish
+      # asynchronously and says so: "Your package is being processed and may
+      # take a few minutes to become available." The first real release through
+      # this workflow failed right here -- both packages had published fine and
+      # signed their provenance into the transparency log, but the check ran six
+      # seconds later and got E404 for a version the registry had not finished
+      # taking in. An E404 straight after a publish means "not yet", not "not
+      # attested", and the two have to be told apart.
+      #
+      # --prefer-online because npm caches the packument, and a poll that reads
+      # its own first miss out of cache would never see the version appear.
       - name: Provenance landed
         if: ${{ !inputs.dry_run }}
         run: |
           V='${{ steps.version.outputs.version }}'
           check() {
-            npm view "$1@$V" --json | jq -e '.dist.attestations' >/dev/null 2>&1 || {
-              echo "::error::$1@$V published without a provenance attestation — check the Trusted Publisher settings on npmjs.com" >&2
-              exit 1
-            }
-            echo "$1@$V carries a provenance attestation"
+            local pkg="$1" out seen=false i
+            for i in $(seq 1 30); do
+              if out="$(npm view "$pkg@$V" --json --prefer-online 2>/dev/null)" && [ -n "$out" ]; then
+                seen=true
+                if jq -e '.dist.attestations' >/dev/null 2>&1 <<<"$out"; then
+                  echo "$pkg@$V carries a provenance attestation"
+                  return 0
+                fi
+              fi
+              sleep 10
+            done
+            if [ "$seen" = true ]; then
+              echo "::error::$pkg@$V is on npm but no provenance attestation appeared within five minutes — check the Trusted Publisher settings on npmjs.com" >&2
+            else
+              echo "::error::$pkg@$V never became visible on the registry within five minutes of publishing" >&2
+            fi
+            return 1
           }
           [ '${{ steps.plan.outputs.publish_sdk }}' != 'true' ]    || check @veris-ai/e2b
           [ '${{ steps.plan.outputs.publish_plugin }}' != 'true' ] || check @veris-ai/e2b-opencode

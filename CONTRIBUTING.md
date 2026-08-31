@@ -102,10 +102,22 @@ is skipped, an existing tag is not re-created, an existing GitHub release is lef
 alone. So the bad case -- the SDK publishes and the plugin then fails -- is
 recovered by re-running, not by publishing the plugin by hand.
 
-The one thing the workflow still refuses is a version where *both* packages are
-already published: there is nothing left to do, and you want a bump, not a
-re-run. Build, typecheck, test and the pack assertions re-run unconditionally, so
-a retry re-proves the artifacts rather than trusting the first attempt's.
+That includes a run that published both packages and then failed on a later step
+— it will skip both publishes and go on to create the tag and release the first
+attempt never got to. The only thing the workflow refuses outright is a version
+that is *fully* released: both packages on npm, and the tag and its GitHub
+release already there. That one means someone forgot to bump.
+
+Build, typecheck, test and the pack assertions re-run unconditionally, so a retry
+re-proves the artifacts rather than trusting the first attempt's.
+
+One thing to expect rather than worry about: npm ingests a publish
+asynchronously, and `npm publish` will tell you so — *"Your package is being
+processed and may take a few minutes to become available."* During that window
+`npm view` returns a 404 for a version that published perfectly well. The
+provenance check polls for up to five minutes for exactly this reason, and
+distinguishes "not ingested yet" from "ingested without an attestation". Do not
+replace it with a single assertion; that is what broke the `0.1.1` release.
 
 ### Prereleases
 
