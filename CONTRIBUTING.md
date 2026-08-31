@@ -28,13 +28,21 @@ npm run test:live
 It costs money and it deletes what it creates, including on failure. A leaked
 twin bills silently, so if you change the cleanup path, check it.
 
-It is also the only check that exercises **gateway mode**. The control plane
+`VERIS_E2E=gateway npm run test:live` is also the acceptance gate for gateway
+mode, and it runs in the direction people get backwards. The control plane
 version-gates gateway on the `X-Veris-SDK` header (`e2b/src/version.ts`, injected
 from `package.json` at build time) and answers a too-old SDK with a 409
-`sdk_too_old` carrying `min_sdk`. Under the default `mode: 'auto'` that refusal
-is not an error -- it falls back to the in-sandbox proxy -- so a version bump
-that drops below `min_sdk` degrades silently and no unit test notices. Check the
-live run after any change to the version number.
+`sdk_too_old` carrying `min_sdk` -- but `min_sdk` is *set from* whichever SDK
+version first passes this suite against real infra. It is not a constraint the
+version has to clear; a release does not bend its number to fit the gate, it
+passes the suite and the gate moves.
+
+What the suite protects against is the silent half. It forces `mode: 'gateway'`,
+so a refusal surfaces as `VerisGatewayNotOfferedError`. Under the default
+`mode: 'auto'` the same refusal is not an error at all -- it falls back to the
+in-sandbox proxy -- so an SDK below `min_sdk` degrades quietly and no unit test
+notices. Run the gateway suite after any change to the version number, and move
+`min_sdk` with it.
 
 ## Layout
 
