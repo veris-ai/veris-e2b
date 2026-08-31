@@ -2,6 +2,31 @@
 
 Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
+## 0.1.1 — 2026-08-31
+
+No behaviour changes in either package: not a line of `@veris-ai/e2b` source
+differs from `0.1.0`. This release exists to ship both packages through the
+release workflow rather than by hand, so that they carry a build provenance
+attestation — `0.1.0` was published from a laptop and has none.
+
+### `@veris-ai/e2b-opencode`
+
+- Declares `@opencode-ai/plugin` as an optional `peerDependency` at `>=1.18`,
+  stating the OpenCode host floor the plugin is built against. It stays a
+  devDependency too, and nothing is added to your install.
+
+### Release pipeline
+
+- A release run is now re-runnable: a package already on npm at that version is
+  skipped rather than aborting the run, so a publish that fails halfway is
+  finished by pressing the button again.
+- Prereleases publish. The npm dist-tag is derived from the version
+  (`0.2.0-rc.1` → `rc`), which npm 11 requires and the workflow never passed.
+- Each publish is checked for a provenance attestation before the release is
+  tagged.
+- The local `npm run release` script is gone. The workflow is the only path to
+  npm, which is what makes the attestation worth anything.
+
 ## 0.1.0 — 2026-08-31
 
 First release.
