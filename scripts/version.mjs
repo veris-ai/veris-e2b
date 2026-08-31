@@ -5,11 +5,6 @@
 // @veris-ai/e2b to 0.2.0 while the plugin still asks for ^0.1.0 publishes a
 // plugin that resolves an SDK it was never built against.
 //
-// Under 0.x the caret is narrow -- ^0.1.0 means >=0.1.0 <0.2.0 -- so the
-// lockstep guarantee is npm-enforced for free. At 1.0.0 and above ^1.0.0 would
-// let the plugin float onto any 1.x SDK, so this must switch to an exact pin
-// before the first stable major.
-//
 //   node scripts/version.mjs 0.2.0
 import { readFileSync, writeFileSync } from 'node:fs'
 
@@ -19,9 +14,20 @@ if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(next ?? '')) {
   process.exit(2)
 }
 
-if (/^[1-9]\d*\./.test(next)) {
-  console.error(`refusing ${next}: at 1.0.0+ a caret range stops guaranteeing lockstep.`)
-  console.error('Switch this script to write an exact pin first -- see the comment above.')
+// The caret below is only safe while we are pre-1.0. npm's range rule is
+// "allows changes that do not modify the left-most non-zero element", so
+// ^0.1.0 resolves >=0.1.0 <0.2.0-0 -- patch-only, and the plugin genuinely
+// cannot float onto an SDK minor it was never built against. At ^1.0.0 that
+// narrowing disappears and the same line would admit every future 1.x.
+//
+// So the first 1.0.0 needs the cross-dependency changed to an exact pin (or a
+// tilde) below before this script may write it. Refuse until someone has.
+if (Number(next.split('.')[0]) >= 1) {
+  console.error(
+    `refusing to write ${next}: the plugin's dependency on @veris-ai/e2b is a caret ` +
+      `range, which only pins a patch range below 1.0.0. Change it to an exact pin in ` +
+      `this script before releasing 1.x.`,
+  )
   process.exit(2)
 }
 
@@ -39,4 +45,5 @@ edit('e2b-opencode/package.json', (p) => {
 })
 
 console.log(`both packages -> ${next} (plugin now depends on ^${next})`)
-console.log(`next: update CHANGELOG.md, commit, then run the release workflow`)
+console.log('next: update CHANGELOG.md, then open a PR. Once it is merged, run the')
+console.log('      `release` workflow from the Actions tab -- it tags and publishes.')

@@ -1,39 +1,18 @@
-# Both workflows pin their actions by commit SHA rather than by tag, which is
-# what the OpenSSF Scorecard Pinned-Dependencies check asks for -- but a SHA
-# pin does not move on its own, so without this file the pins quietly rot and
-# the repo sits on an action release nobody has looked at in a year. Dependabot
-# is the other half of that decision, not an extra.
-#
-# It understands the `# v5.0.1` trailing comment and rewrites both the SHA and
-# the comment together.
+# The workflows pin their actions by commit SHA, which is what the OpenSSF
+# Scorecard Pinned-Dependencies check wants -- but a SHA pin with nothing
+# bumping it is worse than a tag, because it silently stops receiving security
+# fixes. This is the other half of that decision: Dependabot opens the bumps as
+# reviewable PRs and rewrites both the SHA and its trailing version comment.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    commit-message:
-      prefix: "chore"
-    labels:
-      - dependencies
 
-  # One entry per workspace: npm's Dependabot support does not walk the
-  # `workspaces` array from the root, so a root-only entry would watch a
-  # package.json that declares no dependencies of its own.
+  # Root only. Both packages are npm workspaces, so their manifests resolve
+  # through the root lockfile and Dependabot picks them up from here.
   - package-ecosystem: npm
-    directories:
-      - /
-      - /e2b
-      - /e2b-opencode
+    directory: /
     schedule:
       interval: weekly
-    commit-message:
-      prefix: "chore"
-    labels:
-      - dependencies
-    groups:
-      # The SDK's own runtime dependency on `e2b` is the one bump that can
-      # change behaviour for consumers; everything else is build and test
-      # tooling and is fine to review in a batch.
-      dev-tooling:
-        dependency-type: development
