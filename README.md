@@ -1,91 +1,63 @@
-# Veris SDK for E2B
+# veris-e2b
 
-Run your code in an [E2B](https://e2b.dev) sandbox where calls to
-`api.stripe.com`, `www.googleapis.com`, and the rest of your vendor stack are
-answered by **Veris dependency sandboxes** — stateful, contract-accurate mocks —
-with the code under test completely unmodified.
+Veris interception for [E2B](https://e2b.dev): vendor API calls made inside an
+E2B sandbox are answered by a stateful Veris twin, and every run ends with a
+receipt of what the vendor actually received.
 
-No base-URL overrides, no injected config. Your code keeps its production
-hostnames, credentials, and SDKs; the network layer does the rest.
+Two packages, one repo, because they move together.
 
-## 1. Install
-
-```bash
-npm i @veris-ai/e2b
-```
-
-This package re-exports everything from `e2b`, so it's the only one you need.
-
-## 2. Get your keys
-
-| Variable | Where from |
+| package | what it is |
 |---|---|
-| `E2B_API_KEY` | [e2b.dev/dashboard](https://e2b.dev/dashboard) |
-| `VERIS_API_KEY` | your Veris dashboard |
-| `VERIS_ENVIRONMENT_ID` | a Veris environment — it decides which vendor services your sandbox gets |
+| [`@veris-ai/e2b`](./e2b) | The SDK. A drop-in subclass of E2B's `Sandbox` whose `create()` also provisions the twin, points the sandbox's egress at the Veris gateway and installs the interception CA — and whose `kill()` deletes the twin with it. |
+| [`@veris-ai/e2b-opencode`](./e2b-opencode) | An OpenCode plugin. One line in `opencode.json` and every session in that repo runs in a Veris-intercepted sandbox. |
 
-```bash
-export E2B_API_KEY=e2b_…
-export VERIS_API_KEY=…
-export VERIS_ENVIRONMENT_ID=…
-```
-
-## 3. Run code against mocked vendors
+## The SDK
 
 ```ts
-import { Sandbox } from '@veris-ai/e2b'
+import { Sandbox } from '@veris-ai/e2b'   // was: 'e2b'
 
 const sbx = await Sandbox.create()
-
-// api.stripe.com is answered by your Veris mock — the code never knows.
-const res = await sbx.commands.run(
-  'curl -sS https://api.stripe.com/v1/customers -u sk_test_veris:'
-)
-console.log(res.stdout)
-
+await sbx.commands.run('curl -sS https://api.stripe.com/v1/customers -u sk_test_veris:')
+await sbx.veris.assertTouched('stripe')
 await sbx.kill()
 ```
 
-## 4. Check the receipt
+Every E2B option still works — it is a real subclass — so an existing template
+or workflow keeps working with the import changed. Details in
+[`e2b/README.md`](./e2b/README.md) and [`e2b/docs/reference.md`](./e2b/docs/reference.md).
 
-A test suite that quietly stopped calling its dependency prints the same output
-as one that works. The receipt is how you tell them apart:
+## The OpenCode plugin
 
-```ts
-// throws unless the service actually saw a matching request
-await sbx.veris.assertTouched('stripe', { method: 'POST', path: '/v1/charges' })
+```jsonc
+// opencode.json
+{ "plugin": ["@veris-ai/e2b-opencode"] }
 ```
 
-## Verify it end to end
+The agent's `bash`, `read`, `write` and the rest execute in the sandbox while the
+reasoning loop stays on your machine — so the sandbox never holds your model
+key. Adds a `verisReceipt` tool, because an agent that fabricated an API response
+and one that really called it produce identical transcripts. They produce
+different receipts. See [`e2b-opencode/README.md`](./e2b-opencode/README.md).
 
-`examples/verify.mjs` stands up a sandbox, reads the credentials the mocks
-publish, makes authenticated calls to `www.googleapis.com` and `api.stripe.com`,
-and asserts from the receipt that the mocks served them:
+## Install
 
-```bash
-node examples/verify.mjs
+```sh
+npm i @veris-ai/e2b              # the SDK
+npm i @veris-ai/e2b-opencode     # the OpenCode plugin (pulls the SDK with it)
 ```
 
-## 5. Check out the docs
+Both packages version together, so a given plugin version always resolves the
+SDK it was built against.
 
-- [API reference](docs/reference.md) — options, receipts, webhooks, modes, errors
-- [docs.veris.ai](https://docs.veris.ai) — the vendor catalog and platform docs
+## Working in this repo
 
-## Development
-
-```bash
-npm install
-npm run build      # tsup (ESM+CJS) + tsc (declarations)
-npm test           # unit tests — mocked, no account needed
+```sh
+npm install          # links both workspaces
+npm run build        # must come first, see CONTRIBUTING.md
 npm run typecheck
+npm test             # unit tests for both packages
+npm run test:live    # SDK only; needs E2B_API_KEY, VERIS_API_KEY, VERIS_ENVIRONMENT_ID
 ```
 
-Live tests need real credentials and are opt-in:
-
-```bash
-VERIS_E2E=proxy npm run test:live
-```
-
-## License
-
-Apache-2.0
+Releases are cut from the Actions tab — see
+[CONTRIBUTING.md](CONTRIBUTING.md#releasing).

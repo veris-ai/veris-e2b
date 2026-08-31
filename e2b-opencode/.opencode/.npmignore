@@ -1,0 +1,6 @@
+# Ship the compiled plugin, not its sources.
+*.ts
+!*.d.ts
+
+# The sources are not shipped, so the sourcemaps point at nothing.
+*.map
