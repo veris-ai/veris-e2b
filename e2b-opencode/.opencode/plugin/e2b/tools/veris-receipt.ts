@@ -4,10 +4,9 @@
  *
  * The tool that carries the point of the whole plugin.
  *
- * Every other tool tells the agent what its own code did. This one tells it
- * what the VENDOR received — read from the twin, not from the sandbox. An agent
- * that says "I called the Stripe API and it worked" and an agent that fabricated
- * the response produce identical transcripts. They produce different receipts.
+ * Reads a bounded view of the twin log, including earlier and control traffic.
+ * Attribution needs a baseline, new application entries and response/state
+ * assertions; a nonzero cumulative count cannot prove the current run.
  */
 import { z } from 'zod'
 import type { PluginInput } from '@opencode-ai/plugin'
@@ -21,11 +20,11 @@ export const verisReceiptTool = (
   pluginCtx: PluginInput,
 ) => ({
   description:
-    'Read the Veris receipt: what the vendor twin ACTUALLY received from this sandbox. ' +
-    'Use it after any change that is supposed to reach an external API, and before ' +
-    'reporting that the change works. A green run with an empty receipt means the code ' +
-    'never reached the dependency — the two are indistinguishable from inside the sandbox. ' +
-    'Pass a service name to see that service alone.',
+    'Read a bounded Veris twin request log, including earlier work and control traffic. ' +
+    'Capture a baseline before the application flow and compare afterward on the same twin. ' +
+    'A nonzero total alone does not prove this run; keep response/state assertions. ' +
+    'The full view shows up to 20 entries per HTTP service; a service view shows up to 50 ' +
+    'and omits the twin id. Pass a service name to see that service alone.',
   args: {
     service: z
       .string()
@@ -47,7 +46,7 @@ export const verisReceiptTool = (
       if (entry.requests === 0) {
         return (
           `Receipt for '${args.service}': ZERO requests.\n\n` +
-          `The twin was reachable and answered nothing — the code under test never called it. ` +
+          `No requests appear in this returned service log; arrival for the current run is unproven. ` +
           `Do not report this change as working.`
         )
       }
@@ -73,8 +72,8 @@ export const verisReceiptTool = (
       return (
         header +
         `\nZERO requests reached the twin, across ${names.length || 'no'} service(s).\n\n` +
-        `Whatever just ran did not touch its external dependencies. If you were asked to ` +
-        `make an integration work, it does not work yet — say so rather than reporting success.`
+        `No requests appear in these returned logs; arrival for the current run is unproven. ` +
+        `Report that limitation rather than claiming the integration was verified.`
       )
     }
 

@@ -24,8 +24,8 @@ Eight sandbox-backed replacements for OpenCode's built-in tools — `bash`,
 `read`, `write`, `edit`, `multiedit`, `ls`, `glob`, `grep` — plus three
 additions:
 
-- **`verisReceipt`** — what the twin *received*. The tool that separates a real
-  integration from a plausible-looking one.
+- **`verisReceipt`** — a bounded request log from the twin, used with per-run
+  baselines and application assertions.
 - **`gitSync`** — commit in the sandbox and pull into the local `opencode/N`
   branch, returning only once the changes are on your machine.
 - **`getPreviewURL`** — the public URL for a port inside the sandbox.
@@ -39,9 +39,14 @@ Veris receipt — twin sbx_a1b2c3
     POST /v1/charges -> 200
 ```
 
-An empty receipt after a green run means the code never reached its dependency.
-Ask an agent to call the Stripe API and it will report success whether or not it
-made the call; the transcripts are identical. The receipts are not.
+Receipts include earlier work and control traffic, so compare a baseline with
+subsequent evidence from the application's own flow. The full view displays at
+most 20 entries per HTTP service; the service-only view displays at most 50 and
+omits the twin id. At zero total traffic the full view gives the id and service
+count, but no service names. Check a code-inferred service with the `service`
+argument, or use host service metadata; there is no `verisTwin`/manual tool or
+automatically registered MCP in this plugin. Keep response/state assertions and
+report insufficient current-run attribution when complete traces are unavailable.
 
 ## Where the agent runs, and why that matters
 
@@ -50,8 +55,8 @@ Only the tools reach into the sandbox.
 
 That is not an implementation detail. It means the sandbox never holds your
 model provider key, and its egress never has to be widened to reach
-`api.anthropic.com`. The narrower the sandbox's egress, the more the receipt is
-worth.
+`api.anthropic.com`. This plugin currently requests open egress; the network
+limits below still apply.
 
 ```
 your laptop                     E2B sandbox
@@ -66,7 +71,8 @@ your laptop                     E2B sandbox
 
 Your work reaches the sandbox, and the agent's work comes back, as **git
 bundles** moved over E2B's filesystem API. There is no SSH endpoint, no listening
-service, no open port and no credential in either direction.
+service or git credential needed inside the sandbox. The host authenticates
+the file transport with its E2B credentials.
 
 - At session start, local `HEAD` is bundled and adopted in the sandbox as the
   `opencode` branch, so the agent opens on the commit you were looking at.
@@ -93,10 +99,13 @@ still works — you just have to move files yourself.
 | `VERIS_E2B_TEMPLATE` | no | an E2B template name; defaults to E2B's base image |
 | `VERIS_API_BASE` | no | non-production Veris control plane |
 
-Sandboxes are created with `egress: 'open'` because an agent needs npm, git and
-package registries. The cost is two blind spots the receipt names honestly in
-`leaks` — a QUIC or ECH client could reach a real vendor unseen. Vendor
-hostnames are still answered by the twin either way.
+The plugin requests `egress: 'open'` for package registries and leaves the SDK's
+mode at `auto`: gateway interception when available, otherwise the SDK-managed
+in-sandbox proxy fallback. Keep the actual receipt mode: fallback reports
+`proxy-mode-unverified`, while gateway integrity checks a canary route. Neither
+establishes exclusive twin access. Open egress allows other destinations, and the
+reported `udp-quic-possible` / `ech-possible` blind spots mean some vendor traffic
+could bypass interception. Preserve the active mode's trust and network settings.
 
 ## Logs and state
 
@@ -114,15 +123,41 @@ Quitting OpenCode does **not** destroy the sandbox — neither here nor in
 Daytona's plugin. A sandbox is killed, and its twin deleted with it, when the
 OpenCode *session* is deleted.
 
-What stops an abandoned sandbox billing is the timeout. Daytona's platform
-auto-stops after 15 minutes idle; E2B's `timeoutMs` is wall-clock from creation
-and has no idle notion, so the plugin supplies one: a 20-minute window pushed
-forward (at most once every 5 minutes) whenever a tool runs. Walk away and the
-sandbox pauses ~20 minutes later; keep working and it never expires.
+The plugin requests a 20-minute window and attempts to refresh it when a tool
+runs, at most once every 5 minutes. Refresh is best effort; it is not a guarantee
+that a long-running command or an active session will never expire. E2B timeout
+is wall-clock, so a background command needs subsequent tool activity to refresh
+the window. Daytona's idle/stop/delete settings are separate provider settings.
 
-It **pauses** rather than dies — `lifecycle: { onTimeout: 'pause' }` — so the
-filesystem survives and reconnecting to the session resumes it where you left
-off.
+The requested timeout behavior is pause with auto-resume, preserving the remote
+filesystem. Reconnect also checks the attached twin: if its TTL expired, the SDK
+reports `TwinExpiredError` rather than silently attaching a replacement. Persisted
+files do not make old twin measurements current. Deleting a session attempts to
+sync pending changes first; a failed sync can preserve the sandbox for recovery.
+
+## Adding Veris's skills
+
+[Plugins PR #49](https://github.com/veris-ai/plugins/pull/49) adds the shared
+setup/build/fix workflow to these sessions. Its package is
+`@veris-ai/veris-opencode`, built from canonical
+[veris/skills](https://github.com/veris-ai/plugins/tree/main/veris/skills).
+As checked on 2026-09-04, the name is not yet published; after its first release:
+
+```json
+{
+  "plugin": [
+    "@veris-ai/e2b-opencode@latest",
+    "@veris-ai/veris-opencode@latest"
+  ]
+}
+```
+
+Use `/veris:setup`, `/veris:build <request>` and `/veris:fix <request>` with this
+plugin-owned twin. The skills discover available control interfaces rather than
+assuming Daytona's tools or MCP are present. They retain evidence gates and leave
+session cleanup to the provider. Replace any old `@veris-ai/veris-sim-opencode`
+entry, restart OpenCode, and record resolved versions. Select only one sandbox
+provider and one skills package; ignored evidence needs an explicit host handoff.
 
 ## Layout
 
