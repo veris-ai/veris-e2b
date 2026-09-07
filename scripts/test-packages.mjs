@@ -41,5 +41,5 @@ if (provider === 'daytona') {
     assert.match(result.stdout + result.stderr, new RegExp(`veris-daytona ${verb}`))
     console.log(`clean install: veris-daytona ${verb} --help passed`)
   }
-} else assert.equal(pkg.bin, undefined, 'E2B remains SDK-only')
+}
 console.log(`PACK_STAGE=${stage}`)

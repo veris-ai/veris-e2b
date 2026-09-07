@@ -11,7 +11,9 @@ Two packages, one repo, because they move together.
 | [`@veris-ai/e2b`](./e2b) | The SDK. A drop-in subclass of E2B's `Sandbox` whose `create()` also provisions the twin, points the sandbox's egress at the Veris gateway and installs the interception CA — and whose `kill()` deletes the twin with it. |
 | [`@veris-ai/e2b-opencode`](./e2b-opencode) | An OpenCode plugin. One line in `opencode.json` and every session in that repo runs in a Veris-intercepted sandbox. |
 
-`@veris-ai/e2b` remains SDK-only; there is no `veris-e2b` executable.
+`@veris-ai/e2b@0.1.1` is SDK-only. This PR adds no CLI;
+[CLI draft #22](https://github.com/veris-ai/veris-e2b/pull/22) is separate and
+requires a future npm release before its commands can be used.
 
 ## Shared skills in OpenCode
 

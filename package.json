@@ -12,7 +12,7 @@
     "test": "npm run test -w @veris-ai/e2b && npm run test -w @veris-ai/e2b-opencode",
     "test:live": "npm run test:live -w @veris-ai/e2b",
     "version:set": "node scripts/version.mjs",
-    "test:pack": "node scripts/test-pack.mjs"
+    "test:packages": "node scripts/test-packages.mjs"
   },
   "engines": {
     "node": ">=20"

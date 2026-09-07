@@ -11,7 +11,7 @@ published SDK tarball has no `bin` and reads one default receipt page; the publi
 OpenCode receipt accepts only `service`, truncates display, and has no run selector.
 Daytona main already had a CLI, ID pagination, watermarks and capped reporting;
 this change retains that work and reviews its handling of malformed/short/stalled
-pages. E2B stays SDK-only, matching [plugins #48](https://github.com/veris-ai/plugins/pull/48).
+pages. This candidate adds no CLI, matching [plugins #48](https://github.com/veris-ai/plugins/pull/48).
 
 This branch stacks on [provider #21](https://github.com/veris-ai/veris-e2b/pull/21),
 keeping that session's guidance work in its own PR. Native skills loading depends
@@ -33,7 +33,7 @@ response/state evidence gates. No canonical skill files were edited or copied he
   control/probe-only pages, lower bounds, malformed/failed reads, resets (including
   during paging), replaced sessions/services, token session binding, discovery,
   write denial and preserved explicit/scalar/wildcard user configuration.
-- `npm run test:pack`: inspect and install both exact tarballs into a clean temp
+- `npm run test:packages`: inspect and install both exact tarballs into a clean temp
   directory, with no workspace links. Verify public SDK import/version, compiled
   plugin tools, no bundled node_modules, and package size under the release limit.
 - `scripts/test-composition.mjs`, run with Bun against that clean installation
@@ -50,7 +50,7 @@ logic; they are not live application evidence.
 After the normal `npm ci`, build, typecheck and unit tests:
 
 ```sh
-npm run test:pack
+npm run test:packages
 # Use PACK_STAGE printed by that test and the reviewed skills release artifact:
 npm install --prefix <PACK_STAGE> --ignore-scripts <reviewed-skills.tgz>
 VERIS_PACK_STAGE=<PACK_STAGE> bun scripts/test-composition.mjs
@@ -87,3 +87,5 @@ acceptance before claiming the complete workflow is verified. Keep this PR draft
 until those outstanding gates and dependencies are resolved.
 
 E2B release-workflow recovery remains in [#20](https://github.com/veris-ai/veris-e2b/pull/20); this PR does not edit that workflow.
+
+Concurrent [CLI draft #22](https://github.com/veris-ai/veris-e2b/pull/22) owns the CLI and reconnect guard. This candidate excludes that unmerged work. The pair-artifact check uses `test:packages` so it composes with #22's CLI-only `test:pack`. If both ship together, reconcile the release version and rerun both checks and live acceptance.
