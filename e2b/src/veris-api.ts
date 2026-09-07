@@ -197,7 +197,7 @@ export class VerisApiImpl implements VerisApi {
    * plane fans the destination out to all of them.
    *
    * The sandbox must accept public traffic for the twin to reach it — create
-   * it with `allowPublicTraffic: true` if your app is going to receive
+   * it with `network: { allowPublicTraffic: true }` if your app is going to receive
    * webhooks.
    */
   deliverTo(port: number, opts?: DeliverToOpts): Promise<string>
@@ -225,7 +225,7 @@ export class VerisApiImpl implements VerisApi {
     if (!probes.some((p) => p?.answered)) {
       throw new VerisError(
         `no service could reach ${url} — is your app listening, and was the sandbox ` +
-        `created with allowPublicTraffic: true?`,
+        `created with network.allowPublicTraffic: true?`,
         { phase: 'receipt', verisSandboxId: this.ctx.twinId, responseBody: probes })
     }
   }

@@ -4,7 +4,7 @@ import { defineConfig } from 'tsup'
 const { version } = JSON.parse(readFileSync('./package.json', 'utf8')) as { version: string }
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: ['src/index.ts', 'src/cli-entry.ts'],
   format: ['esm', 'cjs'],
   dts: false, // declarations emitted by `tsc --emitDeclarationOnly` (see build script)
   sourcemap: true,

@@ -5,6 +5,7 @@ npm install      # workspaces link @veris-ai/e2b into the plugin
 npm run build    # must come first -- see below
 npm run typecheck
 npm test         # unit tests for both packages, no credentials needed
+npm run test:pack # executable/help and SDK imports from the actual npm tarball
 ```
 
 `build` before `typecheck`, on a clean clone, is not a style preference.
@@ -15,6 +16,14 @@ declarations -- and the plugin's `tsc` reports that as an error on every
 reason.
 
 ## Live verification
+
+For CLI development, after building, run `node e2b/dist/cli-entry.js --help`.
+The four commands are documented in [e2b/docs/cli.md](e2b/docs/cli.md). The package
+has a `bin` mapping and ships that guide; CI and the release workflow check the
+packed executable, help, version, and SDK imports before anything can publish.
+No CLI release has been published by this change. Bump both packages and complete
+the gateway acceptance/release process below before using a version-pinned `npx`
+invocation from outside the checkout.
 
 `npm run test:live` runs the SDK against a real E2B sandbox and a real Veris
 twin -- it creates the sandbox, calls a vendor hostname, reads the receipt, and

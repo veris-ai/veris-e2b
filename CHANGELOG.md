@@ -14,6 +14,18 @@ Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing)
   provisioning and teardown remain plugin-owned.
 - Both packages align with the shared skills adapter; canonical skills remain
   in veris-ai/plugins. SDK stays SDK-only. Publish SDK before dependent plugin.
+### `@veris-ai/e2b`
+
+- Add the `veris-e2b` executable: `provision --sandbox`, local `push`, streaming
+  `exec`, and `teardown` for separate application-test boxes. Provision uses E2B
+  templates and strict gateway egress, prints JSON and preserves the attached twin.
+- Read Veris CLI login profiles in the CLI, prepare bundled certificates after
+  installing dependencies, preserve command argv/status and clean up interrupted
+  or timed-out commands. Refuse to manage SDK/OpenCode-owned boxes.
+- Derive an attached twin's environment from the twin itself; reject gateway
+  reconnects without a fresh credential; report a box ID if failed setup cannot
+  delete it.
+- Ship the CLI guide and check the packed executable in CI and before releases.
 
 ## 0.1.1 — 2026-08-31
 

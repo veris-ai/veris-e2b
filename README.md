@@ -53,6 +53,18 @@ Every E2B option still works — it is a real subclass — so an existing templa
 or workflow keeps working with the import changed. Details in
 [`e2b/README.md`](./e2b/README.md) and [`e2b/docs/reference.md`](./e2b/docs/reference.md).
 
+## The CLI
+
+`@veris-ai/e2b` also builds the `veris-e2b` executable for a separately managed
+application-test box: `provision` attaches to an existing twin, `push` uploads
+local code, `exec` runs commands with trust applied, and `teardown` deletes only
+that box. It reads the Veris CLI's login profile and keeps E2B's template,
+network and lifetime behavior. See the [CLI guide](e2b/docs/cli.md) for the
+version-pinned `npx` workflow and release availability check.
+
+**Release prerequisite:** npm 0.1.1 does not include this executable. The CLI
+must ship in a new published release before the documented `npx` flow is usable.
+
 ## The OpenCode plugin
 
 ```jsonc

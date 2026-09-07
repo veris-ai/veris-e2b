@@ -71,6 +71,18 @@ node examples/verify.mjs
 - [API reference](docs/reference.md) — options, receipts, webhooks, modes, errors
 - [docs.veris.ai](https://docs.veris.ai) — the vendor catalog and platform docs
 
+## Hosted application tests with the CLI
+
+The `veris-e2b` executable provides `provision`, `push`, `exec` and `teardown`
+for a task-owned E2B box attached to the twin your `veris` CLI already manages.
+Read the [CLI guide](docs/cli.md) for published-release checks, version-pinned
+`npx` commands, credentials, templates, uploads, dependency/CA preparation,
+trace evidence and cleanup.
+
+This CLI is unreleased: npm 0.1.1 contains only the SDK. Use a new published
+release containing the `bin` entry once available. SDK imports still use their
+explicit/environment credentials; the login-profile fallback is CLI-specific.
+
 ## Development
 
 ```bash

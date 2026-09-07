@@ -4,6 +4,9 @@ Everything beyond the [quickstart](../README.md). `Sandbox` is a real subclass
 of E2B's, so anything the [E2B SDK](https://e2b.dev/docs) does works here too;
 this covers what Veris adds.
 
+For a separate application-test box on an existing twin, the
+[CLI workflow](cli.md) provides `provision`, `push`, `exec` and `teardown`.
+
 ## Contents
 
 - [Creating a sandbox](#creating-a-sandbox)
@@ -49,7 +52,7 @@ const sbx = await Sandbox.create({
 | `allowOut` | `[]` | Extra hosts or CIDRs your code may reach (npm, your own API). A hostname is interceptable; a CIDR is passed through. |
 | `ttlMinutes` | `timeoutMs` + 10 | Backstop lifetime for the Veris sandbox, in case teardown never runs. |
 | `installCa` | `true` | Install the interception CA into the sandbox's trust stores. |
-| `dataPlaneEnv` | `true` | Inject non-HTTP connection strings (e.g. `DATABASE_URL`) as env. |
+| `dataPlaneEnv` | `true` | Inject non-HTTP connection strings (e.g. `DATABASE_URL`) as env; managed values override create-time `envs`. |
 | `attachSandboxId` | — | Attach to an existing Veris sandbox instead of creating one. `kill()` will not delete it. |
 
 `Sandbox.connect(id)` reattaches to a running sandbox and restores all of the
@@ -107,7 +110,7 @@ proxy mode it is `'proxy-mode-unverified'`, because that mode can't prove it.
 If your app *receives* callbacks, tell the mocks where to deliver them:
 
 ```ts
-const sbx = await Sandbox.create({ allowPublicTraffic: true })
+const sbx = await Sandbox.create({ network: { allowPublicTraffic: true } })
 await sbx.commands.run('node app.js', { background: true })  // listening on :3000
 
 await sbx.veris.deliverTo(3000)          // → https://3000-<id>.e2b.app
@@ -119,7 +122,7 @@ await sbx.veris.deliverTo(3000, { probe: false })    // skip the reachability ch
 `deliverTo` resolves the sandbox's own public URL — the address a vendor would
 POST to in production — registers it with **every** mocked service in one call,
 and verifies they can actually reach it before returning. The sandbox must be
-created with `allowPublicTraffic: true`, or the mocks can't reach it.
+created with `network: { allowPublicTraffic: true }`, or the mocks can't reach it.
 
 ## Interception modes
 
