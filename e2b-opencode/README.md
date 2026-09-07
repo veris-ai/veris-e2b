@@ -20,33 +20,73 @@ no URL to copy.
 
 ## What the agent gets
 
-Eight sandbox-backed replacements for OpenCode's built-in tools — `bash`,
-`read`, `write`, `edit`, `multiedit`, `ls`, `glob`, `grep` — plus three
-additions:
+Remote `bash`, `read`, `write`, `edit`, `multiedit`, `ls`, `glob`, `grep`,
+`getPreviewURL`, and `gitSync`, plus the session tools below.
 
-- **`verisReceipt`** — a bounded request log from the twin, used with per-run
-  baselines and application assertions.
-- **`gitSync`** — commit in the sandbox and pull into the local `opencode/N`
-  branch, returning only once the changes are on your machine.
-- **`getPreviewURL`** — the public URL for a port inside the sandbox.
+**`verisTwin`** returns JSON with `provider`, `sessionId`, execution `sandboxId`,
+`twinId`, `environmentId`, `workingDirectory`, `lifecycleOwner`, `twinOwnership`,
+service routes/control URLs and available capabilities. It lists services even
+when the request log is empty. Pass `service` to read its manual. Verify remote
+`pwd` and `git rev-parse HEAD`; a stored path does not prove source sync succeeded.
 
-```
-Veris receipt — twin sbx_a1b2c3
-  interception: gateway   integrity: verified
+**`verisReceipt`** has two actions:
 
-1 request(s) reached the twin:
-  stripe: 1 request(s)
-    POST /v1/charges -> 200
-```
+1. Finish seeding/probes and background work. Call `{"action":"baseline"}` before
+   the isolated application test. Save the returned opaque `baseline` token.
+2. Run and await that application command through `bash`, preserving TLS/network
+   settings and recording its command, exit status and response/state assertions.
+3. Call `{"action":"read","baseline":"<returned-token>","service":"stripe"}`.
+   Omit `service` for all HTTP control services. Twin, sandbox and OpenCode session
+   identity, interception mode, integrity and blind spots remain in every result.
 
-Receipts include earlier work and control traffic, so compare a baseline with
-subsequent evidence from the application's own flow. The full view displays at
-most 20 entries per HTTP service; the service-only view displays at most 50 and
-omits the twin id. At zero total traffic the full view gives the id and service
-count, but no service names. Check a code-inferred service with the `service`
-argument, or use host service metadata; there is no `verisTwin`/manual tool or
-automatically registered MCP in this plugin. Keep response/state assertions and
-report insufficient current-run attribution when complete traces are unavailable.
+Without a token the result is explicitly `scope: "cumulative"`, not current-run
+proof. Baselines pin per-service request IDs and a unique read-only schema request
+in the trace; reset, removed history, changed service coordinates or replacement
+sessions invalidate them. A restart or eviction of an old token requires a new
+baseline **before** rerunning the test. Services must retain control request headers;
+an unsupported trace format fails baseline capture rather than pretending it is empty.
+
+The SDK paginates up to 20 pages of 1,000 rows, within a newest-ID snapshot. It
+filters control/reserved paths and explicitly marked probe tiers. A complete
+zero means no application entries were observed in that window. Failed reads
+throw; page budgets, stalled pagination and failures after partial progress set
+`complete: false`, `countKind: "at-least"` and `incompleteReason`. Never subtract
+two cumulative counts. The display includes at most 50 entries per service and
+reports `omittedEntries`; this is separate from an incomplete underlying read.
+Use `verisControl` requests with the returned `sinceId`/`untilId` window for raw
+trace bodies, advancing `since_id` and filtering beyond `untilId` yourself.
+
+An unmarked request to a vendor API made by a diagnostic probe looks like an
+application call. Isolate the measurement; concurrent runs cannot be automatically
+attributed. Bodies may be redacted/truncated and missing trace rows cannot be
+recovered by the reader. Receipts remain observations, not tamper-proof execution
+attestations; retain response/state assertions and reported blind spots.
+
+**`verisControl`** provides host-side access to the attached service's `manual`,
+`schema`, `operations`, `data` and `requests`. Pass `service` and `resource`;
+`method` defaults to `GET`. Inspect schema/manual first, then read data with
+`query: {"entity_type":"<table>","limit":"50","offset":"0"}`. Seed rows or
+configure schema-defined faults with `POST`/`PATCH` `data` and
+`body: {"data":{"<table>":[<rows>]}}`; read back the result. Raw data/request
+responses are pages, not inferred totals. Service support is checked by its
+response, and unsupported operations fail explicitly.
+
+Writes request the `verisControlWrite` permission (default `ask`). User permissions,
+including blanket/wildcard rules, win. The tool accepts no credentials, arbitrary
+control URLs, reset, promotion, creation or deletion. The host resolves the service
+from this session's twin, so neither credentials nor control endpoints need to be
+guessed. File-byte transfer is outside this small control interface; a workflow
+requiring it must use an available provider file interface or report the missing
+capability. Canonical workflow content stays in `veris-ai/plugins`.
+
+## MCP and permissions
+
+The plugin registers host MCP `veris` at the configured Veris API base's `/mcp`
+when `VERIS_API_KEY` is present, using header authentication with OAuth disabled.
+Existing MCP configuration is preserved. Lifecycle defaults match Daytona:
+`veris_create_sandbox`/`veris_delete_sandbox` deny, and
+`veris_reset_sandbox`/`veris_promote_sandbox` ask. Skills reuse the plugin's twin;
+these controls do not give skills permission to provision another session.
 
 ## Where the agent runs, and why that matters
 
@@ -107,6 +147,14 @@ establishes exclusive twin access. Open egress allows other destinations, and th
 reported `udp-quic-possible` / `ech-possible` blind spots mean some vendor traffic
 could bypass interception. Preserve the active mode's trust and network settings.
 
+## TLS
+
+Gateway mode installs the gateway CA and provides system-bundle trust variables
+plus `NODE_EXTRA_CA_CERTS`; proxy fallback supplies its own trust environment.
+The command wrapper reapplies the active defaults. Preserve them and diagnose
+certificate failures without disabling verification. SDKs using a pinned private
+CA bundle may need their supported trust configuration; no universal fix is claimed.
+
 ## Logs and state
 
 ```sh
@@ -137,6 +185,14 @@ sync pending changes first; a failed sync can preserve the sandbox for recovery.
 
 ## Adding Veris's skills
 
+Release prerequisites: this provider SDK/plugin pair **0.2.0**, and the first
+published **@veris-ai/veris-opencode 0.7.3** from plugins PR #49. The composition
+is tested using packed release candidates; these versions are not published by
+this PR. Use the configuration after those npm releases exist. Resolve npm
+versions once and pin the installed semantic versions for replay; do not use a
+Git checkout/build installation fallback. PR #49's provider reference must also
+reflect the new baseline/control capability contract before release.
+
 [Plugins PR #49](https://github.com/veris-ai/plugins/pull/49) adds the shared
 setup/build/fix workflow to these sessions. Its package is
 `@veris-ai/veris-opencode`, built from canonical
@@ -153,8 +209,8 @@ As checked on 2026-09-04, the name is not yet published; after its first release
 ```
 
 Use `/veris:setup`, `/veris:build <request>` and `/veris:fix <request>` with this
-plugin-owned twin. The skills discover available control interfaces rather than
-assuming Daytona's tools or MCP are present. They retain evidence gates and leave
+plugin-owned twin. The skills discover `verisTwin`, `verisReceipt` and `verisControl` capabilities
+on the current session; MCP configuration preserves existing user choices. They retain evidence gates and leave
 session cleanup to the provider. Replace any old `@veris-ai/veris-sim-opencode`
 entry, restart OpenCode, and record resolved versions. Select only one sandbox
 provider and one skills package; ignored evidence needs an explicit host handoff.
@@ -166,13 +222,12 @@ e2b-opencode/                @veris-ai/e2b-opencode
 └── .opencode/plugin/e2b/
     ├── core/                session lifecycle, storage, logging, toasts
     ├── git/                 host · sandbox · session — the bundle transport
-    ├── tools/               the eleven tools
-    └── plugins/             the four OpenCode hooks
+    ├── tools/               remote application and session tools
+    └── plugins/             OpenCode hooks
 ```
 
 The SDK is the sibling workspace `../e2b` (`@veris-ai/e2b`). It owns twin
-provisioning, egress, the interception CA and teardown, so this package only
-ever says create, connect and kill.
+provisioning, egress, the interception CA and teardown, while this package binds tools to the current OpenCode session.
 
 ## Developing against it
 

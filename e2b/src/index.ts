@@ -31,3 +31,6 @@ export {
 } from './errors'
 export type { VerisErrorPhase } from './errors'
 export { SDK_VERSION } from './version'
+
+export type { ReceiptBaseline } from './run-receipt'
+export type { ControlResource, ControlOptions } from './service-control'
