@@ -189,6 +189,7 @@ jobs:
       - run: npm run build
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:pack
 
       # The SDK ships dist/, the plugin ships compiled .opencode/plugin. Both
       # declare README.md in `files` and shipping without one leaves a blank npm
@@ -237,6 +238,8 @@ jobs:
           listing SDK "e2b/veris-ai-e2b-$V.tgz"
           has 'package/dist/index.js'   "dist/index.js missing from the SDK tarball"
           has 'package/dist/index.d.ts' "type declarations missing from the SDK tarball"
+          has 'package/dist/cli-entry.js' "veris-e2b executable missing from the SDK tarball"
+          has 'package/docs/cli.md'     "CLI guide missing from the SDK tarball"
           has 'package/dist/boot.sh'    "boot.sh missing from the SDK tarball"
           has 'package/README.md'       "README missing from the SDK tarball"
           echo "$LISTING"

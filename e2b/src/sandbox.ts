@@ -58,7 +58,7 @@ export interface VerisOpts {
   allowOut?: string[]
   /** Install the CA + inject the trust env family at create. Default true. */
   installCa?: boolean
-  /** Inject { [env_hint]: dsn } for non-HTTP twin services. Default true; caller envs win. */
+  /** Inject { [env_hint]: dsn } for non-HTTP twin services. Default true; managed envs win. */
   dataPlaneEnv?: boolean
   /** 'auto' (default): gateway when offered to this SDK version, else proxy (loud). 'gateway'/'proxy' force one. */
   mode?: VerisMode
@@ -163,6 +163,11 @@ export class Sandbox extends BaseSandbox {
     // any failure deletes the twin we created (only the TTL backstop otherwise).
     const ownsTwin = !v.attachSandboxId
     const ttlMinutes = v.ttlMinutes ?? ttlMinutesFor(opts.timeoutMs ?? 300_000)
+    const cleanupOwnedTwin = async (id: string) => {
+      await controlPlane.deleteTwin(coords.environmentId!, id).catch(() => {
+        console.warn(`Cleanup failed for owned Veris twin ${id}; delete it in environment ${coords.environmentId} on ${coords.apiBase}, or await its TTL`)
+      })
+    }
     let twin: TwinSandbox
     if (v.attachSandboxId) {
       const existing = await controlPlane.getTwin(v.attachSandboxId)
@@ -173,12 +178,12 @@ export class Sandbox extends BaseSandbox {
       try {
         twin = await controlPlane.waitReady(created.id, 240_000)
       } catch (e) {
-        await controlPlane.deleteTwin(coords.environmentId!, created.id).catch(() => {})
+        await cleanupOwnedTwin(created.id)
         throw e
       }
     }
 
-    const cleanupTwin = async () => { if (ownsTwin) await controlPlane.deleteTwin(coords.environmentId!, twin.id).catch(() => {}) }
+    const cleanupTwin = async () => { if (ownsTwin) await cleanupOwnedTwin(twin.id) }
 
     let credential: EgressCredential | null = null
     try {
@@ -298,15 +303,17 @@ export class Sandbox extends BaseSandbox {
     let trustEnv: Record<string, string> | undefined
     if (mode === 'gateway') {
       const credential = await controlPlane.mintEgressCredential(twin.environment_id, twinId)
-      if (credential) {
-        const services = twin.services?.length ? twin.services : await controlPlane.services(twinId)
-        await instance.updateNetwork(buildNetwork({ credential, services, mode: egress, allowOut }))
-        await writeCa(instance, credential.ca_pem)
-        await probeCanary(instance, credential.canary_host, twinId, CA_CERT_PATH)
-        canaryHost = credential.canary_host
-        caCertPath = CA_CERT_PATH
-        trustEnv = sanitizeTrustEnv(credential.trust_env)
+      if (!credential) {
+        throw new VerisGatewayNotOfferedError('gateway credentials are no longer offered; refusing to reconnect without proving interception',
+          { phase: 'credential-mint', verisSandboxId: twinId })
       }
+      const services = twin.services?.length ? twin.services : await controlPlane.services(twinId)
+      await instance.updateNetwork(buildNetwork({ credential, services, mode: egress, allowOut }))
+      await writeCa(instance, credential.ca_pem)
+      await probeCanary(instance, credential.canary_host, twinId, CA_CERT_PATH)
+      canaryHost = credential.canary_host
+      caCertPath = CA_CERT_PATH
+      trustEnv = sanitizeTrustEnv(credential.trust_env)
     }
 
     attachVeris(instance, {
@@ -426,7 +433,7 @@ async function createGateway<S extends typeof BaseSandbox>(
   const mergedEnvs = { ...(p.opts.envs ?? {}), ...verisManaged }
   const metadata = {
     ...reserveMeta(p.opts.metadata),
-    [META.twinId]: p.twin.id, [META.envId]: p.coords.environmentId ?? p.twin.environment_id,
+    [META.twinId]: p.twin.id, [META.envId]: p.twin.environment_id,
     [META.apiBase]: p.coords.apiBase, [META.mode]: 'gateway', [META.egress]: p.egress,
     [META.ownsTwin]: String(p.ownsTwin), [META.allowOut]: JSON.stringify(p.allowOut),
   }
@@ -448,12 +455,16 @@ async function createGateway<S extends typeof BaseSandbox>(
     if (p.installCaOpt) await installCa(instance)
     await probeCanary(instance, p.credential.canary_host, p.twin.id, CA_CERT_PATH)
   } catch (err) {
-    await instance.kill().catch(() => {}) // twin cleanup is create()'s wrapper
+    try { await instance.kill() } // twin cleanup is create()'s wrapper
+    catch {
+      throw new VerisError(`E2B box ${instance.sandboxId} could not be deleted after gateway setup failed; delete it before retrying`,
+        { phase: 'e2b-create', verisSandboxId: p.twin.id, cause: err })
+    }
     throw err
   }
 
   attachVeris(instance, {
-    controlPlane: p.controlPlane, environmentId: p.coords.environmentId ?? p.twin.environment_id,
+    controlPlane: p.controlPlane, environmentId: p.twin.environment_id,
     twinId: p.twin.id, mode: 'gateway', egress: p.egress, allowOut: p.allowOut,
     canaryHost: p.credential.canary_host, caCertPath: CA_CERT_PATH, trustEnv, ownsTwin: p.ownsTwin,
   })

@@ -10,6 +10,7 @@
     "build": "npm run build -w @veris-ai/e2b && npm run build -w @veris-ai/e2b-opencode",
     "typecheck": "npm run typecheck -w @veris-ai/e2b && npm run typecheck -w @veris-ai/e2b-opencode",
     "test": "npm run test -w @veris-ai/e2b && npm run test -w @veris-ai/e2b-opencode",
+    "test:pack": "node scripts/check-cli-package.mjs",
     "test:live": "npm run test:live -w @veris-ai/e2b",
     "version:set": "node scripts/version.mjs",
     "test:packages": "node scripts/test-packages.mjs"

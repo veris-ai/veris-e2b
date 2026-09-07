@@ -9,7 +9,7 @@ import type { Sandbox, SandboxNetworkUpdate } from 'e2b'
 import type { ControlPlane, ServiceInfo } from './control-plane'
 import { fetchReceiptEntry, probeCanary } from './receipt'
 import type { Receipt, ReceiptEntry, ReceiptLeak } from './receipt'
-import { VerisUntouchedError, VerisError } from './errors'
+import { VerisUntouchedError, VerisError, ReceiptIntegrityError } from './errors'
 import { buildNetwork, callerStaticAllowOut, dataPlaneEnv, isHttpUrl } from './network'
 import type { EgressMode } from './network'
 import { vendoredTrustEnv } from './trust'
@@ -54,6 +54,7 @@ export interface VerisApi {
   receiptSince(baseline: ReceiptBaseline, service?: string): Promise<Receipt>
   control(service: string, resource: ControlResource, options?: ControlOptions): Promise<unknown>
   receipt(): Promise<Receipt>
+  receipt(options: ReceiptOptions): Promise<Receipt>
   receipt(service: string): Promise<ReceiptEntry>
   assertTouched(service: string, match?: TouchMatcher): Promise<void>
   getDataPlaneEnv(): Promise<Record<string, string>>
@@ -61,6 +62,12 @@ export interface VerisApi {
   updateNetwork(net: SandboxNetworkUpdate & { detachVeris?: boolean }): Promise<void>
   deliverTo(port: number, opts?: DeliverToOpts): Promise<string>
   deliverTo(url: string | null, opts?: DeliverToOpts): Promise<string | null>
+}
+
+export interface ReceiptOptions {
+  /** Per-service trace IDs recorded before the application flow. Every HTTP
+   * control service needs a mark. Only newer handler/fault rows count. */
+  since: Record<string, number>
 }
 
 export interface DeliverToOpts {
@@ -86,13 +93,18 @@ export class VerisApiImpl implements VerisApi {
   }
 
   receipt(): Promise<Receipt>
+  receipt(options: ReceiptOptions): Promise<Receipt>
   receipt(service: string): Promise<ReceiptEntry>
-  async receipt(service?: string): Promise<Receipt | ReceiptEntry> {
+  async receipt(options?: string | ReceiptOptions): Promise<Receipt | ReceiptEntry> {
+    if (typeof options === 'object' && this.ctx.mode === 'gateway' && !this.ctx.canaryHost) {
+      throw new ReceiptIntegrityError('cannot verify a scoped gateway receipt without a canary', { phase: 'receipt' })
+    }
     // In gateway mode the canary proves egress is still tunneled before we
     // trust any count — a receipt from an un-tunneled sandbox would lie.
     await this.verifyIntegrity()
     const services = await this.services()
-    if (service !== undefined) {
+    if (typeof options === 'string') {
+      const service = options
       const svc = services.find((s) => s.name === service)
       if (!svc) {
         throw new VerisError(
@@ -102,7 +114,17 @@ export class VerisApiImpl implements VerisApi {
       return fetchReceiptEntry(svc)
     }
     const entries = await Promise.all(
-      services.filter((s) => isHttpUrl(s.control_url)).map(async (svc) => [svc.name, await fetchReceiptEntry(svc)] as const))
+      services.filter((s) => isHttpUrl(s.control_url)).map(async (svc) => {
+        if (!options) return [svc.name, await fetchReceiptEntry(svc)] as const
+        // A scoped read with no watermark for this service must not fall
+        // through to fetchReceiptEntry's `sinceId = 0` default: that silently
+        // returns the cumulative log as if it were this run's traffic.
+        const since = options.since[svc.name]
+        if (since === undefined) {
+          throw new VerisError(`missing or invalid watermark for '${svc.name}'`, { phase: 'receipt' })
+        }
+        return [svc.name, await fetchReceiptEntry(svc, since)] as const
+      }))
     // Proxy mode redirects only tcp/80+443, so QUIC/HTTP3 and ECH bypass it —
     // the same blind spots open gateway mode carries. Strict gateway mode has none.
     const leaks: ReceiptLeak[] = this.ctx.mode === 'proxy' || this.ctx.egress === 'open'
@@ -197,7 +219,7 @@ export class VerisApiImpl implements VerisApi {
    * plane fans the destination out to all of them.
    *
    * The sandbox must accept public traffic for the twin to reach it — create
-   * it with `allowPublicTraffic: true` if your app is going to receive
+   * it with `network: { allowPublicTraffic: true }` if your app is going to receive
    * webhooks.
    */
   deliverTo(port: number, opts?: DeliverToOpts): Promise<string>
@@ -225,7 +247,7 @@ export class VerisApiImpl implements VerisApi {
     if (!probes.some((p) => p?.answered)) {
       throw new VerisError(
         `no service could reach ${url} — is your app listening, and was the sandbox ` +
-        `created with allowPublicTraffic: true?`,
+        `created with network.allowPublicTraffic: true?`,
         { phase: 'receipt', verisSandboxId: this.ctx.twinId, responseBody: probes })
     }
   }

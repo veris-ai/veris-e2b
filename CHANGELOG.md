@@ -8,12 +8,33 @@ Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing)
   and report incomplete windows. New baseline APIs detect reset/history loss and
   session replacement while retaining interception integrity and blind spots.
 - Gateway receipt reads fail when credentials needed to verify the canary are absent.
-  The reconnect change belongs to the separate CLI draft #22.
 - OpenCode exposes consistent session/twin discovery, manuals and scoped schema,
   state, seed/fault and raw trace access. Data writes honor user permissions;
   provisioning and teardown remain plugin-owned.
 - Both packages align with the shared skills adapter; canonical skills remain
   in veris-ai/plugins. SDK stays SDK-only. Publish SDK before dependent plugin.
+
+### `@veris-ai/e2b`
+
+- Add the `veris-e2b` executable inside the SDK: `run`, `provision --sandbox`,
+  `push`, streaming `exec`, and `teardown` for separate application-test boxes. Provision uses E2B
+  templates and strict gateway egress, prints JSON and preserves the attached twin.
+- Support local uploads or shallow HTTPS clones (`--repo` / `--ref`), including
+  temporary GitHub authentication. `run` supports setup, required service traffic,
+  keeping resources, and cleanup of owned boxes/twins while preserving attached twins.
+- Add scoped SDK receipts with `receipt({ since })`. Scoping reuses the same
+  `receipt.ts` pagination the OpenCode session tools use, so the CLI and the
+  skills answer "what did this run send?" identically: one watermark-bounded
+  window, the same application tiers, control and reserved paths excluded, and
+  incomplete reads labelled as floors rather than counts. `run` records marks
+  after setup and checks the gateway before issuing a verdict.
+- Read Veris CLI login profiles in the CLI, prepare bundled certificates after
+  installing dependencies, preserve command argv/status and clean up interrupted
+  or timed-out commands. Refuse to manage SDK/OpenCode-owned boxes.
+- Derive an attached twin's environment from the twin itself; reject gateway
+  reconnects without a fresh credential; report a box ID if failed setup cannot
+  delete it.
+- Ship the CLI guide and check the packed executable in CI and before releases.
 
 ## 0.1.1 — 2026-08-31
 
