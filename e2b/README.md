@@ -73,11 +73,15 @@ node examples/verify.mjs
 
 ## Hosted application tests with the CLI
 
-The `veris-e2b` executable provides `provision`, `push`, `exec` and `teardown`
-for a task-owned E2B box attached to the twin your `veris` CLI already manages.
+The SDK package includes the `veris-e2b` executable with `run`, `provision`,
+`push`, `exec` and `teardown`, like the Daytona SDK's CLI. Use `run --sandbox`
+for the task's existing twin, or `run --environment` to create and own a new one.
+`run` uploads or clones code, installs dependencies via `--setup`, prepares CA
+trust, runs the application, requires fresh twin traffic, and cleans up.
+`--keep` retains resources for inspection; teardown preserves attached twins.
 Read the [CLI guide](docs/cli.md) for published-release checks, version-pinned
 `npx` commands, credentials, templates, uploads, dependency/CA preparation,
-trace evidence and cleanup.
+trace evidence, clone authentication and cleanup.
 
 This CLI is unreleased: npm 0.1.1 contains only the SDK. Use a new published
 release containing the `bin` entry once available. SDK imports still use their

@@ -163,6 +163,11 @@ export class Sandbox extends BaseSandbox {
     // any failure deletes the twin we created (only the TTL backstop otherwise).
     const ownsTwin = !v.attachSandboxId
     const ttlMinutes = v.ttlMinutes ?? ttlMinutesFor(opts.timeoutMs ?? 300_000)
+    const cleanupOwnedTwin = async (id: string) => {
+      await controlPlane.deleteTwin(coords.environmentId!, id).catch(() => {
+        console.warn(`Cleanup failed for owned Veris twin ${id}; delete it in environment ${coords.environmentId} on ${coords.apiBase}, or await its TTL`)
+      })
+    }
     let twin: TwinSandbox
     if (v.attachSandboxId) {
       const existing = await controlPlane.getTwin(v.attachSandboxId)
@@ -173,12 +178,12 @@ export class Sandbox extends BaseSandbox {
       try {
         twin = await controlPlane.waitReady(created.id, 240_000)
       } catch (e) {
-        await controlPlane.deleteTwin(coords.environmentId!, created.id).catch(() => {})
+        await cleanupOwnedTwin(created.id)
         throw e
       }
     }
 
-    const cleanupTwin = async () => { if (ownsTwin) await controlPlane.deleteTwin(coords.environmentId!, twin.id).catch(() => {}) }
+    const cleanupTwin = async () => { if (ownsTwin) await cleanupOwnedTwin(twin.id) }
 
     let credential: EgressCredential | null = null
     try {

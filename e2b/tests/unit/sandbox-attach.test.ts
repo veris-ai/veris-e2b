@@ -2,8 +2,9 @@ import { Sandbox as E2B } from 'e2b'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { Sandbox } from '../../src/sandbox'
 import { VerisGatewayNotOfferedError } from '../../src/errors'
+import { ControlPlane } from '../../src/control-plane'
 
-const twin = { id: 'twin-1', environment_id: 'actual-env', status: 'ready', services: [{ name: 'stripe', url: 'https://stripe.example', control_url: 'https://stripe.example', routes: [{ host: 'api.stripe.com' }] }] }
+const twin = { id: 'twin-1', environment_id: 'actual-env', status: 'ready', services: [{ name: 'stripe', status: 'ready', url: 'https://stripe.example', control_url: 'https://stripe.example', routes: [{ host: 'api.stripe.com' }] }] }
 let offered: boolean
 let requests: { method: string; path: string }[]
 let base: { sandboxId: string; commands: { run: ReturnType<typeof vi.fn> }; files: { write: ReturnType<typeof vi.fn> }; getInfo: ReturnType<typeof vi.fn>; updateNetwork: ReturnType<typeof vi.fn>; kill: ReturnType<typeof vi.fn> }
@@ -56,4 +57,15 @@ it('names a leaked E2B ID if gateway preparation and deletion both fail', async 
   base.kill.mockRejectedValue(new Error('delete denied'))
   await expect(Sandbox.create({ veris: { attachSandboxId: 'twin-1', mode: 'gateway' } })).rejects.toThrow('box-1 could not be deleted')
   expect(requests.some(r => r.method === 'DELETE')).toBe(false)
+})
+
+it('reports an owned twin that cannot be deleted when provider creation fails', async () => {
+  vi.spyOn(ControlPlane.prototype, 'createTwin').mockResolvedValue(twin)
+  vi.spyOn(ControlPlane.prototype, 'waitReady').mockResolvedValue(twin)
+  vi.spyOn(ControlPlane.prototype, 'deleteTwin').mockRejectedValue(new Error('denied'))
+  vi.mocked(E2B.create).mockRejectedValue(new Error('template unavailable'))
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  await expect(Sandbox.create({ veris: { environmentId: 'actual-env', mode: 'gateway' } })).rejects.toThrow('E2B sandbox create failed')
+  expect(ControlPlane.prototype.deleteTwin).toHaveBeenCalledWith('actual-env', 'twin-1')
+  expect(warning).toHaveBeenCalledWith(expect.stringContaining('owned Veris twin twin-1'))
 })

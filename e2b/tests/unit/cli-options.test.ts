@@ -1,8 +1,16 @@
 import { execFileSync } from 'node:child_process'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseOptions, shellQuote, UsageError, WORK_DIR } from '../../src/cli-options'
 
 describe('CLI arguments', () => {
+  afterEach(() => vi.unstubAllEnvs())
+  it('parses run with setup, clone, required services, template and independent lifetimes', () => {
+    vi.stubEnv('VERIS_ENVIRONMENT_ID', 'ambient-env')
+    expect(parseOptions(['run', '--sandbox', 'twin-1', '--repo', 'https://github.com/org/app.git', '--ref', 'v1.2', '--setup', 'npm ci', '--require-service', 'stripe', '--keep', '--timeout', '600', '--lifetime', '1800', '--', 'npm', 'test']))
+      .toMatchObject({ verb: 'run', twinId: 'twin-1', environmentId: undefined, repo: 'https://github.com/org/app.git', ref: 'v1.2', setup: 'npm ci', requireService: ['stripe'], keep: true, timeoutMs: 600000, lifetimeMs: 1800000, command: "'npm' 'test'" })
+    expect(parseOptions(['run', '--', 'true'])).toMatchObject({ environmentId: 'ambient-env', twinId: undefined })
+  })
+
   it('uses E2B templates, strict allowances and a separate timeout for the box', () => {
     expect(parseOptions(['provision', '--sandbox', 'twin-1', '--template', 'my-template', '--allow-out', 'registry.npmjs.org', '--allow-out', 'pypi.org', '--env', 'A=x=y', '--timeout', '120', '--allow-public-traffic']))
       .toEqual({ verb: 'provision', twinId: 'twin-1', template: 'my-template', workDir: WORK_DIR, timeoutMs: 120000,
@@ -19,7 +27,7 @@ describe('CLI arguments', () => {
     expect(shellQuote("x'y")).toBe("'x'\\''y'")
   })
 
-  it.each(['provision', 'push', 'exec', 'teardown'])('prints help for %s without credentials or required arguments', verb => {
+  it.each(['run', 'provision', 'push', 'exec', 'teardown'])('prints help for %s without credentials or required arguments', verb => {
     expect(parseOptions([verb, '--help']).verb).toBe('help')
   })
 
@@ -27,7 +35,10 @@ describe('CLI arguments', () => {
     ['toString'], ['unknown'], ['provision'], ['provision', '--sandbox', 'twin', '--image', 'node:20'],
     ['provision', '--sandbox', '../twin'], ['provision', '--sandbox', 'twin', '--workdir', '/'],
     ['provision', '--sandbox', 'twin', '--timeout', '0'], ['exec', 'box', '--timeout', 'Infinity', '--', 'true'],
-    ['push', 'box', '--repo', 'https://github.com/a/b'], ['teardown', 'box', 'other'], ['exec', 'box'],
+    ['push', 'box', '--repo', 'https://github.com/a/b', '--source', '.'], ['teardown', 'box', 'other'], ['exec', 'box'],
+    ['push', 'box', '--repo', 'https://token@github.com/a/b'], ['push', 'box', '--ref', 'main'],
+    ['push', 'box', '--repo', 'ssh://github.com/a/b'], ['push', 'box', '--repo', 'https://github.com/a/b', '--ref=-evil'],
+    ['run', '--sandbox', 'twin', '--environment', 'env', '--', 'true'], ['run', '--sandbox', 'twin'],
     ['provision', '--sandbox', 'twin', '--env', 'VERIS_API_KEY=secret'],
     ['exec', 'box', '--env', 'E2B_API_KEY=secret', '--', 'true'],
     ['exec', 'box', '--env', 'A;echo=1', '--', 'true'], ['push', 'box', '--', 'unexpected'],

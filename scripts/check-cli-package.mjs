@@ -29,10 +29,10 @@ try {
   const run = (...args) => execFileSync(process.execPath, args, { cwd: unpacked, env, encoding: 'utf8' })
   const bin = join(unpacked, pkg.bin['veris-e2b'])
   assert.equal(run(bin, '--version').trim(), pkg.version)
-  for (const verb of ['provision', 'push', 'exec', 'teardown']) assert.match(run(bin, verb, '--help'), new RegExp(`usage: veris-e2b ${verb}`))
+  for (const verb of ['run', 'provision', 'push', 'exec', 'teardown']) assert.match(run(bin, verb, '--help'), new RegExp(`usage: veris-e2b ${verb}`))
   run('--input-type=module', '-e', 'import { Sandbox } from "./dist/index.js"; if (typeof Sandbox.create !== "function") process.exit(1)')
   run('-e', 'if (typeof require("./dist/index.cjs").Sandbox.create !== "function") process.exit(1)')
-  console.log(`CLI package verified: ${pack.files.length} files, ${pack.size} bytes; four help commands, version, ESM and CJS imports pass`)
+  console.log(`CLI package verified: ${pack.files.length} files, ${pack.size} bytes; five help commands, version, ESM and CJS imports pass`)
 } finally {
   rmSync(temp, { recursive: true, force: true })
 }

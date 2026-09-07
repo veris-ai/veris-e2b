@@ -18,7 +18,7 @@ reason.
 ## Live verification
 
 For CLI development, after building, run `node e2b/dist/cli-entry.js --help`.
-The four commands are documented in [e2b/docs/cli.md](e2b/docs/cli.md). The package
+The five commands are documented in [e2b/docs/cli.md](e2b/docs/cli.md). The package
 has a `bin` mapping and ships that guide; CI and the release workflow check the
 packed executable, help, version, and SDK imports before anything can publish.
 No CLI release has been published by this change. Bump both packages and complete

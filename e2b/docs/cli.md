@@ -1,9 +1,12 @@
 # Hosted application tests with `veris-e2b`
 
-The CLI manages a separate E2B box on an **existing Veris twin**. The controlling
-machine runs `veris up`, seeds the twin, reads its trace and data, and eventually
-runs `veris down`. The box runs the application's install and tests. These four
-verbs do not configure OpenCode or adopt/delete session-owned sandboxes.
+The CLI ships **inside `@veris-ai/e2b`**, like `veris-daytona` inside
+`@veris-ai/daytona`. It manages a separate E2B box for application tests with
+the same five verbs: `run`, `provision`, `push`, `exec`, and `teardown`.
+Use the task's **existing Veris twin** with `--sandbox`; `run --environment`
+can also create a twin when the task needs a new one. The controlling machine
+seeds the twin and inspects its data. These commands do not configure OpenCode
+or adopt/delete session-owned sandboxes.
 
 ## Install a published release
 
@@ -19,9 +22,10 @@ npm view @veris-ai/e2b@<version> version bin --json
 **The CLI is unreleased; npm 0.1.1 has no `bin` or executable.** A new published
 release exporting `veris-e2b` is a prerequisite. Do not use a source build as the
 application-test installation workaround. Once that release is available, verify
-all four commands before creating resources:
+all five commands before creating resources:
 
 ```sh
+npx --yes --package=@veris-ai/e2b@<version> veris-e2b run --help
 npx --yes --package=@veris-ai/e2b@<version> veris-e2b provision --help
 npx --yes --package=@veris-ai/e2b@<version> veris-e2b push --help
 npx --yes --package=@veris-ai/e2b@<version> veris-e2b exec --help
@@ -54,8 +58,91 @@ commands include the concrete package version it is running.
   runtime version rather than assuming one. A Docker image tag, local image or
   Daytona snapshot is not an E2B template. Prepare a suitable template separately
   when needed. Local `push` also requires `tar` on the controlling machine.
+  `--repo` requires remote `git`. `run` additionally needs trace endpoints with
+  numeric IDs, tiers, `limit`, `order`, and `since_id`; missing or malformed
+  capabilities fail the run and require a compatible published twin release.
 
-## Run
+## One-command run
+
+From the application's directory, attach to the task twin and run:
+
+```sh
+veris-e2b run --sandbox <twin-id> --template <template-id> \
+  --allow-out registry.npmjs.org --setup 'npm ci' \
+  --require-service stripe --timeout 600 --lifetime 1800 -- npm test
+```
+
+This uploads current source, runs setup, refreshes system trust, patches known
+bundled CAs, records each service's trace watermark, executes the application,
+and prints new application traffic. The box is deleted afterward; the attached
+twin stays with the task. Repeat `--require-service` for every dependency the
+test must touch. Without it, at least one service must show new traffic.
+Check the application's expected response and state as well: a receipt proves
+traffic reached the twin, not that every business assertion is correct.
+
+`--source <directory>` uploads a different local tree. To use a remote repository:
+
+```sh
+veris-e2b run --sandbox <twin-id> --template <template-id> \
+  --repo https://github.com/your-org/your-app.git --ref main \
+  --allow-out github.com --allow-out registry.npmjs.org \
+  --setup 'npm ci' --require-service stripe -- npm test
+```
+
+Replace the example repository with the application's repository. Cloning uses
+the supported E2B `commands.run` interface and remote `git clone --depth 1`;
+`--ref` accepts a branch or tag, not an arbitrary commit SHA. No submodules or
+Git LFS objects are downloaded. `GITHUB_TOKEN` (then `GH_TOKEN`) can authenticate
+an exact `https://github.com` URL. A temporary askpass script reads the token
+from the clone process environment; it contains no token and is removed afterward.
+The token is never embedded in argv or saved in the origin URL. It is available
+inside the sandbox during cloning, so use task-scoped repository access.
+Other HTTPS hosts are public-only; inline credentials, nonstandard ports and
+redirects are refused. If routing to the Git host is unavailable, use local upload.
+
+`--timeout` limits each setup/main command (default 1800 seconds). `--lifetime`
+sets the **total** E2B lifetime from creation (default 3600 seconds), subject to
+plan limits; budget time for upload, installation, tests and receipt collection.
+It does not extend an attached twin. `--env KEY=VALUE` applies to setup and tests;
+explicit command values override managed trust/DSNs. The bundled CA patch uses
+the same environment. These are the same execution semantics as `exec` below.
+
+For a task that needs a new twin, replace `--sandbox <twin-id>` with
+`--environment <environment-id>` (or set `VERIS_ENVIRONMENT_ID`). These two flags
+are exclusive; ambient `VERIS_ENVIRONMENT_ID` is ignored when attaching.
+`run` owns the twin it creates and deletes **both resources** afterward, including
+after an application/setup failure. An owned twin's initial TTL is the E2B
+lifetime plus ten minutes, with a ten-minute minimum. There is no automatic
+extension during the run. Failed twin provisioning also attempts cleanup and
+reports its ID if deletion fails.
+
+`--keep` retains resources after success or failure for inspection and prints
+both IDs and a version-pinned `teardown` command. Lifetimes still apply. Teardown
+deletes only resources owned by this CLI; an owned twin requires the original
+Veris credentials/profile, while an attached twin is preserved. Both deletions
+are attempted even if one fails. If E2B has already expired, its metadata cannot
+identify the owned twin; remove that twin separately using the recorded ID and
+environment, or let its TTL expire.
+
+The receipt excludes setup and older traffic by taking marks immediately before
+the application. It counts only new `handler` and `fault` rows, not `control`,
+callback delivery or canary activity, and prints their IDs/methods/paths/statuses.
+It verifies the gateway canary again before reading. Trace reads page forward
+in batches of 1000, up to 20 pages per service; reaching that budget prints
+counts as **at least N**. A positive observed count can satisfy the traffic gate;
+read remaining pages separately for a complete audit. Keep the twin free of other
+workloads during the measured flow: watermarks cannot distinguish concurrent
+callers, and trace evidence alone cannot prove which caller made a request.
+
+A failed test keeps its exit status even if the receipt also fails. A passing
+command exits 1 when required traffic is missing, the trace/integrity cannot be
+verified, or cleanup fails. Setup failure skips the application. SIGINT/SIGTERM
+during an active command stop its handle; signals during other stages wait for
+that stage to return and then proceed to cleanup. SIGKILL or a host crash relies
+on the E2B/twin lifetime backstops. Save stdout/stderr as task evidence; use
+`--keep` if you need to inspect an owned twin's data before deleting it.
+
+## Step-by-step workflow
 
 1. Start or reuse the task's twin with `veris up`; take its ID from `veris status`
    or `.veris/twin.local.yaml`'s `sandbox.id`. Check its service credentials and
@@ -86,7 +173,9 @@ commands include the concrete package version it is running.
    `.veris-e2b`, `.env` and `.env.*` at every level. This is not `.gitignore`:
    review other untracked files and deliberately include only the app's required
    twin credential files. Local symlinks and executable bits are preserved.
-   There is no remote-clone flag; upload avoids git-host routing and credentials.
+   Alternatively, `push <e2bSandboxId> --repo <https-url> --ref <branch-or-tag>`
+   uses the same clone behavior as `run`. The work directory must be empty;
+   cloning into a previous upload/checkout fails without removing its files.
 
    Re-upload after editing locally. Matching files are overwritten, but removed
    local files remain remotely; use a fresh box after removals or renames. The
@@ -130,7 +219,7 @@ commands include the concrete package version it is running.
    response/state. Provisioning probes, `control` operations and cumulative SDK
    receipts cannot establish that the application ran. `exec` returns the actual
    command status, 124 on timeout, 130/143 on interruption; it does not produce a
-   `veris run` receipt or `--require-service` verdict. Save evidence after failures
+   `veris-e2b run` receipt or `--require-service` verdict. Save evidence after failures
    as well as successes.
 7. Restore any task callback destination, save the evidence, then delete the box:
    ```sh
@@ -138,12 +227,21 @@ commands include the concrete package version it is running.
    veris down
    ```
    Teardown requires only the E2B key and works after the twin expires. It deletes
-   only a box marked as owned by this CLI; SDK/OpenCode-owned boxes are refused.
+   only the attached-twin box marked as owned by this CLI; SDK/OpenCode-owned boxes are refused.
    An absent E2B box succeeds. The task retains responsibility for its twin, and
    `veris down` does not delete an E2B box. Explicitly clean up failures and
    cancellations; the E2B lifetime is the backstop for an abandoned box.
 
 ## Network differences and limitations
+
+| Daytona CLI capability | E2B CLI behavior |
+| --- | --- |
+| `run`, `provision`, `push`, `exec`, `teardown` | Same workflow verbs, packaged in the SDK with an `npx` executable |
+| Local upload or `--repo` / `--ref` | Tar/files API upload, or shallow HTTPS clone through `commands.run` |
+| `--setup`, `--require-service`, `--keep` | Setup, fresh traffic gate, retained resources with ownership-aware teardown |
+| Image / snapshot selection | `--template` chooses an existing E2B template |
+| Download/network allowances | E2B strict gateway rules; explicit download hosts, no default registries |
+| Sandbox lifetime | E2B `--lifetime` for `run`; `provision --timeout`; attached twin TTL is independent |
 
 - Strict egress allows the twin's vendor routes, canary, non-HTTP data-plane hosts
   and explicit `--allow-out` entries. It has no default package registries and no
@@ -162,8 +260,8 @@ commands include the concrete package version it is running.
   allowlist and recreate the box when install requirements change. HTTP/2 and
   WebSockets to mocked hosts remain unsupported by the gateway; QUIC/ECH and
   broad CIDR passthrough require the care described in the [SDK reference](reference.md).
-- Callbacks need `provision --allow-public-traffic`, which sets
-  `network.allowPublicTraffic`. They are not registered by these four commands.
+- Callbacks need `provision --allow-public-traffic` (or the same flag on `run`),
+  which sets `network.allowPublicTraffic`. They are not registered by these commands.
   Start a receiver listening on `0.0.0.0`, then use the supported SDK's
   `sbx.veris.deliverTo(portOrUrl)` with explicit/environment Veris credentials.
   Record and restore the attached twin's previous destination; it is shared

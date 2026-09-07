@@ -16,9 +16,15 @@ Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing)
   in veris-ai/plugins. SDK stays SDK-only. Publish SDK before dependent plugin.
 ### `@veris-ai/e2b`
 
-- Add the `veris-e2b` executable: `provision --sandbox`, local `push`, streaming
-  `exec`, and `teardown` for separate application-test boxes. Provision uses E2B
+- Add the `veris-e2b` executable inside the SDK: `run`, `provision --sandbox`,
+  `push`, streaming `exec`, and `teardown` for separate application-test boxes. Provision uses E2B
   templates and strict gateway egress, prints JSON and preserves the attached twin.
+- Support local uploads or shallow HTTPS clones (`--repo` / `--ref`), including
+  temporary GitHub authentication. `run` supports setup, required service traffic,
+  keeping resources, and cleanup of owned boxes/twins while preserving attached twins.
+- Add scoped SDK receipts with `receipt({ since })`: paginate only new application
+  handler/fault rows, reject unsupported traces, and label capped counts as floors.
+  `run` records marks after setup and checks the gateway before issuing a verdict.
 - Read Veris CLI login profiles in the CLI, prepare bundled certificates after
   installing dependencies, preserve command argv/status and clean up interrupted
   or timed-out commands. Refuse to manage SDK/OpenCode-owned boxes.
