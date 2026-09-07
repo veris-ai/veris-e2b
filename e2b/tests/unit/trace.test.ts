@@ -71,7 +71,7 @@ describe('scoped trace receipts', () => {
   it('does not approve unverified interception even when a service has traffic', () => {
     vi.spyOn(process.stdout, 'write').mockReturnValue(true)
     vi.spyOn(process.stderr, 'write').mockReturnValue(true)
-    const receipt = { mode: 'proxy' as const, integrity: 'proxy-mode-unverified' as const, leaks: [], services: { stripe: { requests: 1, entries: [row(42)], controlUrl: svc.control_url, raw: {} } } }
+    const receipt = { mode: 'proxy' as const, integrity: 'proxy-mode-unverified' as const, leaks: [], services: { stripe: { requests: 1, entries: [row(42)], controlUrl: svc.control_url, capped: false, raw: {} } } }
     expect(reportReceipt(receipt, 'twin-1', 0, ['stripe'])).toBe(1)
     expect(reportReceipt(receipt, 'twin-1', 7, ['stripe'])).toBe(7)
   })
