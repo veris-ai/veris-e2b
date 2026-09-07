@@ -2,6 +2,18 @@
 
 Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
+## 0.2.0 — Unreleased
+
+- SDK receipts paginate by stable request ID, exclude control/probe evidence,
+  and report incomplete windows. New baseline APIs detect reset/history loss and
+  session replacement while retaining interception integrity and blind spots.
+- Gateway reconnect fails when credentials needed to verify its canary are absent.
+- OpenCode exposes consistent session/twin discovery, manuals and scoped schema,
+  state, seed/fault and raw trace access. Data writes honor user permissions;
+  provisioning and teardown remain plugin-owned.
+- Both packages align with the shared skills adapter; canonical skills remain
+  in veris-ai/plugins. SDK stays SDK-only. Publish SDK before dependent plugin.
+
 ## 0.1.1 — 2026-08-31
 
 No behaviour changes in either package: not a line of `@veris-ai/e2b` source

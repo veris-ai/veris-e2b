@@ -1,10 +1,10 @@
+// The namespaced Veris surface: everything this package adds hangs off
+// `sbx.veris`, matching e2b's own `sbx.commands` / `sbx.files` idiom so a
+// future e2b minor can never collide with a generic method name.
 import { captureBaseline, validateBaseline } from './run-receipt'
 import type { ReceiptBaseline } from './run-receipt'
 import { serviceControl } from './service-control'
 import type { ControlOptions, ControlResource } from './service-control'
-// The namespaced Veris surface: everything this package adds hangs off
-// `sbx.veris`, matching e2b's own `sbx.commands` / `sbx.files` idiom so a
-// future e2b minor can never collide with a generic method name.
 import type { Sandbox, SandboxNetworkUpdate } from 'e2b'
 import type { ControlPlane, ServiceInfo } from './control-plane'
 import { fetchReceiptEntry, probeCanary } from './receipt'

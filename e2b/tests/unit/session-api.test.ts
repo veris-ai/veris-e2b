@@ -26,4 +26,32 @@ describe('SDK run and control interface', () => {
     await expect(api().control('stripe', '../reset' as never, { method: 'POST' })).rejects.toThrow(/unsupported/)
     await expect(api().control('stripe', 'schema', { method: 'PATCH' })).rejects.toThrow(/unsupported/)
   })
+  it('invalidates evidence if reset happens during pagination', async () => {
+    const t = trace()
+    const sdk = api()
+    const baseline = await sdk.receiptBaseline()
+    t.add()
+    vi.stubGlobal('fetch', vi.fn(async (input, init) => {
+      const response = await t.fetcher(input, init)
+      const q = new URL(String(input)).searchParams
+      if (q.get('order') === 'asc' && q.get('limit') === '1000') t.reset()
+      return response
+    }))
+    await expect(sdk.receiptSince(baseline)).rejects.toThrow(/baseline invalid/)
+  })
+
+})
+
+
+describe('E2B receipt integrity', () => {
+  it('refuses gateway receipts without a canary and preserves proxy-mode uncertainty', async () => {
+    trace()
+    const context = { sandbox: { sandboxId: 'box' }, controlPlane: { services: async () => [svc] },
+      twinId: 'twin', environmentId: 'env', ownsTwin: true, mode: 'gateway', egress: 'open' }
+    const gateway = new VerisApiImpl(context as never)
+    await expect(gateway.receipt()).rejects.toThrow(/no canary credential/)
+    await expect(gateway.receiptBaseline()).rejects.toThrow(/no canary credential/)
+    const proxy = new VerisApiImpl({ ...context, mode: 'proxy' } as never)
+    expect(await proxy.receipt()).toMatchObject({ mode: 'proxy', integrity: 'proxy-mode-unverified', leaks: ['udp-quic-possible', 'ech-possible'] })
+  })
 })
