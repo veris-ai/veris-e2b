@@ -23,12 +23,12 @@ import { SessionGitManager } from '../git/session-git-manager'
 import { SandboxGitManager } from '../git/sandbox-git-manager'
 
 /**
- * E2B's timeoutMs is wall-clock from creation, not inactivity — unlike Daytona,
- * whose autoStopInterval defaults to 15 minutes idle. A long wall-clock timeout
+ * E2B's timeoutMs is wall-clock rather than inactivity. A long wall-clock timeout
  * therefore bills for the whole window even after the engineer walks away.
  *
  * So: a short window, pushed forward on activity. An abandoned sandbox pauses
- * ~20 minutes after the last tool call; an active one never expires. Pausing
+ * after the requested window. Refresh is best effort; long-running work can
+ * still expire without subsequent tool activity. Pausing
  * rather than killing keeps the filesystem, and connect() resumes it, which is
  * what getSandbox() already relies on for reconnects.
  */
