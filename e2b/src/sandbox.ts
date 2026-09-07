@@ -298,6 +298,7 @@ export class Sandbox extends BaseSandbox {
     let trustEnv: Record<string, string> | undefined
     if (mode === 'gateway') {
       const credential = await controlPlane.mintEgressCredential(twin.environment_id, twinId)
+      if (!credential) throw new VerisGatewayNotOfferedError('gateway credentials unavailable during reconnect; receipt integrity cannot be verified', { phase: 'connect' })
       if (credential) {
         const services = twin.services?.length ? twin.services : await controlPlane.services(twinId)
         await instance.updateNetwork(buildNetwork({ credential, services, mode: egress, allowOut }))

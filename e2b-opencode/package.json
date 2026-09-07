@@ -1,6 +1,6 @@
 {
   "name": "@veris-ai/e2b-opencode",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "OpenCode plugin that runs every session in an E2B sandbox whose vendor API calls are answered by a Veris twin, with a receipt of what the vendor received.",
   "type": "module",
   "main": "./.opencode/plugin/index.js",
@@ -42,7 +42,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@veris-ai/e2b": "^0.1.1",
+    "@veris-ai/e2b": "^0.2.0",
     "xdg-basedir": "^5.1.0",
     "zod": "^4.2.1"
   },

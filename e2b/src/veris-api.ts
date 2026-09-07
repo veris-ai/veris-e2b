@@ -1,3 +1,7 @@
+import { captureBaseline, validateBaseline } from './run-receipt'
+import type { ReceiptBaseline } from './run-receipt'
+import { serviceControl } from './service-control'
+import type { ControlOptions, ControlResource } from './service-control'
 // The namespaced Veris surface: everything this package adds hangs off
 // `sbx.veris`, matching e2b's own `sbx.commands` / `sbx.files` idiom so a
 // future e2b minor can never collide with a generic method name.
@@ -40,9 +44,15 @@ export interface TouchMatcher {
 }
 
 export interface VerisApi {
+  readonly ownsTwin: boolean
   readonly sandboxId: string
+  readonly environmentId: string
+  manual(service: string): Promise<string>
   readonly mode: 'gateway' | 'proxy'
   services(): Promise<ServiceInfo[]>
+  receiptBaseline(): Promise<ReceiptBaseline>
+  receiptSince(baseline: ReceiptBaseline, service?: string): Promise<Receipt>
+  control(service: string, resource: ControlResource, options?: ControlOptions): Promise<unknown>
   receipt(): Promise<Receipt>
   receipt(service: string): Promise<ReceiptEntry>
   assertTouched(service: string, match?: TouchMatcher): Promise<void>
@@ -62,7 +72,13 @@ export interface DeliverToOpts {
 export class VerisApiImpl implements VerisApi {
   constructor(private readonly ctx: VerisContext) {}
 
+  get ownsTwin(): boolean { return this.ctx.ownsTwin }
   get sandboxId(): string { return this.ctx.twinId }
+  get environmentId(): string { return this.ctx.environmentId }
+  async manual(service: string): Promise<string> {
+    const body = await this.control(service, 'manual')
+    return typeof body === 'string' ? body : JSON.stringify(body)
+  }
   get mode(): 'gateway' | 'proxy' { return this.ctx.mode }
 
   services(): Promise<ServiceInfo[]> {
@@ -74,9 +90,7 @@ export class VerisApiImpl implements VerisApi {
   async receipt(service?: string): Promise<Receipt | ReceiptEntry> {
     // In gateway mode the canary proves egress is still tunneled before we
     // trust any count — a receipt from an un-tunneled sandbox would lie.
-    if (this.ctx.mode === 'gateway' && this.ctx.canaryHost) {
-      await probeCanary(this.ctx.sandbox, this.ctx.canaryHost, this.ctx.twinId, this.ctx.caCertPath)
-    }
+    await this.verifyIntegrity()
     const services = await this.services()
     if (service !== undefined) {
       const svc = services.find((s) => s.name === service)
@@ -101,6 +115,42 @@ export class VerisApiImpl implements VerisApi {
     }
   }
 
+  private async verifyIntegrity(): Promise<void> {
+    if (this.ctx.mode === 'gateway') {
+      if (!this.ctx.canaryHost) throw new VerisError('gateway receipt integrity unavailable: no canary credential; reconnect before reading', { phase: 'receipt' })
+      await probeCanary(this.ctx.sandbox, this.ctx.canaryHost, this.ctx.twinId, this.ctx.caCertPath)
+    }
+  }
+
+  async receiptBaseline(): Promise<ReceiptBaseline> {
+    await this.verifyIntegrity()
+    return captureBaseline(this.ctx.twinId, this.ctx.sandbox.sandboxId,
+      (await this.services()).filter(s => isHttpUrl(s.control_url)))
+  }
+
+  async receiptSince(baseline: ReceiptBaseline, service?: string): Promise<Receipt> {
+    await this.verifyIntegrity()
+    const services = (await this.services()).filter(s => isHttpUrl(s.control_url))
+    if (service !== undefined && !services.some(s => s.name === service)) {
+      throw new VerisError(`unknown HTTP service '${service}'`, { phase: 'receipt' })
+    }
+    await validateBaseline(baseline, this.ctx.twinId, this.ctx.sandbox.sandboxId, services)
+    const selected = service === undefined ? services : services.filter(s => s.name === service)
+    const entries = await Promise.all(selected.map(async svc =>
+      [svc.name, await fetchReceiptEntry(svc, baseline.services[svc.name]!.id)] as const))
+    // Reset during the read invalidates the whole measurement, including any
+    // pages fetched before history disappeared.
+    await validateBaseline(baseline, this.ctx.twinId, this.ctx.sandbox.sandboxId, await this.services().then(s => s.filter(v => isHttpUrl(v.control_url))))
+    return { services: Object.fromEntries(entries), mode: this.ctx.mode, integrity: this.ctx.mode === 'gateway' ? 'verified' : 'proxy-mode-unverified',
+      leaks: this.ctx.mode === 'proxy' || this.ctx.egress === 'open' ? ['udp-quic-possible', 'ech-possible'] : [] }
+  }
+
+  async control(service: string, resource: ControlResource, options?: ControlOptions): Promise<unknown> {
+    const svc = (await this.services()).find(s => s.name === service)
+    if (!svc) throw new VerisError(`unknown service '${service}'`)
+    return serviceControl(svc, resource, options)
+  }
+
   async assertTouched(service: string, match?: TouchMatcher): Promise<void> {
     // Throws VerisError (not VerisUntouchedError) for an unknown service — a
     // typo is a different failure from a service that saw zero traffic.
@@ -111,6 +161,9 @@ export class VerisApiImpl implements VerisApi {
           (match.method === undefined || r.method.toUpperCase() === match.method.toUpperCase()) &&
           (match.path === undefined || r.path.includes(match.path)))
       : entry.entries
+    if (matched.length < need && entry.capped) {
+      throw new VerisError(`receipt for '${service}' is incomplete; insufficient evidence`, { phase: 'receipt' })
+    }
     if (matched.length < need) {
       const what = match
         ? `matching ${match.method ?? 'ANY'} ${match.path ?? '*'} (${matched.length}/${need})`

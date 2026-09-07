@@ -23,6 +23,7 @@ import { SessionGitManager } from './git/session-git-manager'
 import { toast } from './core/toast'
 import { customTools } from './plugins/custom-tools'
 import { eventHandlers } from './plugins/session-events'
+import { verisConfig } from './plugins/veris-config'
 import { systemPromptTransform } from './plugins/system-transform'
 
 export type { EventSessionDeleted, LogLevel, SandboxInfo, SessionInfo, ProjectSessionData } from './core/types'
@@ -62,6 +63,7 @@ async function verisE2BPlugin(ctx: PluginInput) {
   }
 
   return {
+    config: verisConfig,
     tool: await customTools(ctx, sessionManager),
     event: await eventHandlers(ctx, sessionManager, REPO_PATH),
     'experimental.chat.system.transform': await systemPromptTransform(ctx, REPO_PATH),

@@ -1,3 +1,5 @@
+import { verisControlTool } from './tools/veris-control'
+import { verisTwinTool } from './tools/veris-twin'
 /**
  * Copyright Veris AI, Inc.
  * SPDX-License-Identifier: Apache-2.0
@@ -41,6 +43,8 @@ export function createE2BTools(
     // Additions.
     getPreviewURL: getPreviewURLTool(sessionManager, projectId, worktree, pluginCtx),
     gitSync: gitSyncTool(sessionManager, projectId, worktree, pluginCtx),
+    verisTwin: verisTwinTool(sessionManager, projectId, worktree, pluginCtx),
+    verisControl: verisControlTool(sessionManager, projectId, worktree, pluginCtx),
     verisReceipt: verisReceiptTool(sessionManager, projectId, worktree, pluginCtx),
   }
 }
