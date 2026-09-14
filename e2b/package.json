@@ -32,7 +32,7 @@
     "example": "node examples/quickstart.mjs"
   },
   "dependencies": {
-    "e2b": "^2.45.0"
+    "e2b": "^2.49.1"
   },
   "keywords": [
     "veris",
