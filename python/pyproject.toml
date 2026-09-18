@@ -51,3 +51,9 @@ ignore = ["E501"]  # the formatter owns line length
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011"]
+
+[tool.ruff.format]
+# Ruff formats ```python blocks inside Markdown too, which collapses the aligned
+# comment columns the README uses to present the API as a table. That is prose
+# losing to a code formatter; the README is documentation, not source.
+exclude = ["*.md"]
