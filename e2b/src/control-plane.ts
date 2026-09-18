@@ -102,12 +102,22 @@ export class ControlPlane {
     return parsed as T
   }
 
-  async createTwin(environmentId: string, opts: { ttlMinutes?: number; metadata?: Record<string, string> } = {}): Promise<TwinSandbox> {
+  /** Provision a twin. `snapshotId` boots it from one of the environment's
+   *  snapshots instead of its baseline; the control plane rejects a snapshot
+   *  that belongs to a different environment. */
+  async createTwin(
+    environmentId: string,
+    opts: { ttlMinutes?: number; metadata?: Record<string, string>; snapshotId?: string } = {},
+  ): Promise<TwinSandbox> {
     const res = await this.request('POST', `/v1/environments/${environmentId}/sandboxes`, {
       ttl_minutes: opts.ttlMinutes,
       metadata: opts.metadata,
+      snapshot_id: opts.snapshotId,
     })
-    return this.json<TwinSandbox>(res, `create sandbox in environment ${environmentId}`, 'twin-provision')
+    // Name the snapshot in the failure text: "environment env_1" alone reads as
+    // a broken environment when the real fault is a snapshot of another one.
+    const from = opts.snapshotId ? ` from snapshot ${opts.snapshotId}` : ''
+    return this.json<TwinSandbox>(res, `create sandbox in environment ${environmentId}${from}`, 'twin-provision')
   }
 
   async getTwin(sandboxId: string): Promise<TwinSandbox | null> {
