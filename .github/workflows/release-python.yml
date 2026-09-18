@@ -1,0 +1,181 @@
+# Publishes veris-e2b to PyPI.
+#
+# Separate from release.yml on purpose. The two packages sets version
+# independently -- the npm pair share a version because the plugin depends on
+# the SDK, and the Python package depends on neither -- and both registries key
+# their trusted-publisher trust on the WORKFLOW FILENAME, so one file cannot
+# serve both without making each registry's trust contract depend on the other's
+# release cadence. Renaming this file breaks publishing until PyPI's publisher
+# settings are updated to match.
+#
+# Run manually from the Actions tab. The version comes from
+# python/pyproject.toml; the release flow is: bump in a PR, merge, run this. The
+# input exists only to override that in an emergency.
+#
+# Auth is PyPI trusted publishing (OIDC): configure once on pypi.org under the
+# project's Publishing settings (owner veris-ai, repo veris-e2b, workflow
+# release-python.yml). Before the FIRST release the project does not exist yet,
+# so add it as a "pending publisher" at
+# https://pypi.org/manage/account/publishing/ instead. No token, no secret.
+#
+# Re-runnable: --check-url makes uv skip a file PyPI already has rather than
+# failing on the duplicate, and the tag and release steps check before they
+# write. A run that gets half-way and fails can simply be re-run.
+name: release-python
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Override version (default: the version in python/pyproject.toml)"
+        required: false
+      dry_run:
+        description: "Build and inspect, but do not publish"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Publish-then-tag is not atomic, and two dispatches racing through it is the
+# one way to reach a state the guards below cannot untangle. Queue rather than
+# cancel: cancelling mid-publish is exactly what we are avoiding.
+concurrency:
+  group: release-python
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    permissions:
+      contents: write # tag + GitHub release
+      id-token: write # PyPI trusted publishing
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.1.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
+
+      # The free-text input arrives through env rather than ${{ }} into the
+      # script body: an interpolated input is substituted before bash parses the
+      # line, so a crafted string would run as code. The step output below is
+      # interpolated directly -- it has been validated by the time it is.
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="$INPUT_VERSION"
+          [ -n "$VERSION" ] || VERSION="$(uv version --short)"
+
+          # PEP 440 is what PyPI accepts, and uv build would fail on anything
+          # else -- but only after the whole test suite has run. Fail here.
+          if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?$ ]]; then
+            echo "::error::'$VERSION' is not a PEP 440 version — PyPI takes 1.2.3, 1.2.3rc1, 1.2.3.dev4, not 1.2.3-rc.1." >&2
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing veris-e2b $VERSION"
+
+      # An override that does not match the file ships a wheel whose metadata
+      # disagrees with the repo, and leaves the next release bumping from the
+      # wrong number.
+      - name: pyproject.toml agrees on the version
+        run: |
+          V='${{ steps.version.outputs.version }}'
+          FILE="$(uv version --short)"
+          [ "$FILE" = "$V" ] || {
+            echo "::error::python/pyproject.toml says $FILE, not $V — run 'uv version $V' and commit." >&2
+            exit 1
+          }
+
+      # --locked: the lockfile is the contract, so a drifted pyproject fails the
+      # run rather than silently resolving something else at release time.
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest
+
+      - run: uv build
+
+      # The sdist carries the README (PyPI renders it as the project page) and
+      # the wheel carries py.typed (without it every downstream type-checker
+      # silently treats the package as untyped). Both are easy to lose to a
+      # packaging change and neither failure is visible until after release.
+      - name: Inspect the artifacts
+        run: |
+          V='${{ steps.version.outputs.version }}'
+          WHEEL="dist/veris_e2b-$V-py3-none-any.whl"
+          SDIST="dist/veris_e2b-$V.tar.gz"
+
+          for f in "$WHEEL" "$SDIST"; do
+            [ -f "$f" ] || { echo "::error::$f was not built" >&2; ls -la dist >&2; exit 1; }
+          done
+
+          unzip -l "$WHEEL" | grep -q 'veris_e2b/py.typed' || {
+            echo "::error::py.typed missing from the wheel — downstream type checkers would ignore the package" >&2
+            exit 1
+          }
+          tar -tzf "$SDIST" | grep -q 'README.md' || {
+            echo "::error::README missing from the sdist — the PyPI project page would be blank" >&2
+            exit 1
+          }
+
+          # A wheel this size is source only; anything near a megabyte means a
+          # venv, a cache or a dist/ got swept in by a packaging change.
+          BYTES="$(wc -c < "$WHEEL" | tr -d ' ')"
+          [ "$BYTES" -le 1048576 ] || {
+            echo "::error::wheel is $BYTES bytes, over the 1048576 ceiling" >&2
+            unzip -l "$WHEEL" >&2
+            exit 1
+          }
+          echo "wheel: $BYTES bytes"
+          unzip -l "$WHEEL"
+
+      # --check-url lets uv skip a file the index already has instead of dying
+      # on the duplicate, which is what makes a half-finished run safe to re-run.
+      # --trusted-publishing always rather than the default `automatic`: on a
+      # misconfigured publisher, automatic falls back to looking for a token and
+      # fails with a credentials error that says nothing about OIDC.
+      - name: Publish to PyPI
+        if: ${{ !inputs.dry_run }}
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/veris-e2b/
+
+      # Both halves are conditional for the same reason the publish is: a re-run
+      # that finishes a half-done release must not fail on the tag or release the
+      # first run already created.
+      #
+      # The tag is prefixed: `v0.1.0` belongs to the npm pair, which version
+      # separately, and two ecosystems minting the same tag name is a collision
+      # waiting for the first release where the numbers happen to line up.
+      - name: Tag and GitHub release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V='${{ steps.version.outputs.version }}'
+          TAG="python-v$V"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::notice::tag $TAG already exists on origin — leaving it alone"
+          else
+            git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::release $TAG already exists — leaving it alone"
+          else
+            # Anything but a plain X.Y.Z is a prerelease: PyPI sorts it that way
+            # and pip will not install it without --pre, so GitHub should say so.
+            PRERELEASE=()
+            [[ "$V" =~ ^[0-9]+(\.[0-9]+)*$ ]] || PRERELEASE=(--prerelease)
+            gh release create "$TAG" "${PRERELEASE[@]}" \
+              --title "veris-e2b $V (Python)" \
+              --notes "https://pypi.org/project/veris-e2b/$V/"
+          fi

@@ -249,6 +249,18 @@ uv run ruff check .
 uv run ruff format .
 ```
 
+## Releasing
+
+```bash
+uv version 0.2.0      # then uv lock, commit, PR, merge
+```
+
+Then **Actions → release-python → Run workflow**. It builds, checks the artifacts
+and publishes to PyPI over trusted publishing (OIDC, no token), then tags
+`python-v0.2.0`. `dry_run: true` rehearses everything but the publish. Versions
+are PEP 440 (`0.2.0rc1`, not `0.2.0-rc.1`), and this package versions separately
+from the npm pair. Details in [CONTRIBUTING.md](../CONTRIBUTING.md#releasing-the-python-package).
+
 ## License
 
 Apache-2.0
