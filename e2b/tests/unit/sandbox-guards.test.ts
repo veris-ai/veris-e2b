@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Sandbox } from '../../src/sandbox'
-import { MissingCredentialsError, UnsupportedOperationError } from '../../src/errors'
+import { MissingCredentialsError, UnsupportedOperationError, VerisError } from '../../src/errors'
 
 describe('coordinate resolution', () => {
   it('create() throws MissingCredentialsError naming VERIS_API_KEY when absent', async () => {
@@ -51,5 +51,23 @@ describe('default control plane', () => {
     vi.unstubAllGlobals()
     if (prevBase) process.env.VERIS_API_BASE = prevBase
     expect(seen[0]).toContain('https://svc.api.veris.ai/')
+  })
+})
+
+describe('snapshotId guards', () => {
+  it('refuses snapshotId together with attachSandboxId — before any network call', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('no request should be made') }))
+    await expect(Sandbox.create({ veris: { apiKey: 'k', attachSandboxId: 'sb_1', snapshotId: 'snap_1' } }))
+      .rejects.toBeInstanceOf(VerisError)
+    await expect(Sandbox.create({ veris: { apiKey: 'k', attachSandboxId: 'sb_1', snapshotId: 'snap_1' } }))
+      .rejects.toMatchObject({ message: expect.stringContaining('mutually exclusive') })
+    vi.unstubAllGlobals()
+  })
+
+  it('refuses snapshotId in proxy mode, where the twin is deployed in-sandbox', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('no request should be made') }))
+    await expect(Sandbox.create({ veris: { apiKey: 'k', environmentId: 'env_1', mode: 'proxy', snapshotId: 'snap_1' } }))
+      .rejects.toMatchObject({ message: expect.stringContaining('gateway mode') })
+    vi.unstubAllGlobals()
   })
 })

@@ -49,6 +49,10 @@ export interface VerisOpts {
   apiBase?: string
   /** Attach to an EXISTING twin instead of provisioning one (advanced). kill() will NOT delete it. */
   attachSandboxId?: string
+  /** Boot the twin from one of the environment's snapshots instead of its
+   *  baseline, so the run starts from a known state. Mutually exclusive with
+   *  attachSandboxId (an existing twin already is at some state). */
+  snapshotId?: string
   /** Twin TTL backstop, minutes. Default: derived from timeoutMs + 10, min 10. */
   ttlMinutes?: number
   /** 'strict' (default): only vendor hosts + allowOut + data-plane egress; no QUIC/ECH leak.
@@ -97,6 +101,7 @@ const META = {
   egress: 'veris_egress',
   ownsTwin: 'veris_owns_twin',
   allowOut: 'veris_allow_out',
+  snapshotId: 'veris_snapshot_id',
 } as const
 
 /** All keys the class reserves in E2B metadata. */
@@ -141,6 +146,15 @@ export class Sandbox extends BaseSandbox {
     const egress: EgressMode = v.egress ?? 'strict'
     const allowOut = v.allowOut ?? []
 
+    // An attached twin is already at whatever state it is at — a snapshot to
+    // boot it from is a contradiction, not a refinement. Checked before any
+    // network call, like the other coordinate errors.
+    if (v.snapshotId && v.attachSandboxId) {
+      throw new VerisError(
+        'snapshotId and attachSandboxId are mutually exclusive: attaching reuses an existing twin, which cannot be re-booted from a snapshot',
+        { phase: 'credentials' })
+    }
+
     const coords = resolveCoordinates(v, /* requireEnv */ mode === 'proxy' ? true : !v.attachSandboxId)
     const controlPlane = new ControlPlane({ apiKey: coords.apiKey, apiBase: coords.apiBase, sdkVersion: SDK_VERSION })
 
@@ -150,6 +164,12 @@ export class Sandbox extends BaseSandbox {
     if (mode === 'proxy') {
       if (v.attachSandboxId) {
         throw new VerisError('attachSandboxId is only supported in gateway mode', { phase: 'credentials' })
+      }
+      // veris-proxy deploys its own twin from inside the sandbox, with no
+      // snapshot in its contract — honoring the option is impossible, so say so
+      // rather than booting a baseline twin the caller did not ask for.
+      if (v.snapshotId) {
+        throw new VerisError('snapshotId is only supported in gateway mode', { phase: 'credentials' })
       }
       warnProxyFallback('mode: "proxy"')
       return createProxy(this, {
@@ -169,7 +189,7 @@ export class Sandbox extends BaseSandbox {
       if (!existing) throw new TwinExpiredError(`attach target ${v.attachSandboxId} not found`, { verisSandboxId: v.attachSandboxId })
       twin = existing.status === 'ready' ? existing : await controlPlane.waitReady(v.attachSandboxId, 240_000)
     } else {
-      const created = await controlPlane.createTwin(coords.environmentId!, { ttlMinutes })
+      const created = await controlPlane.createTwin(coords.environmentId!, { ttlMinutes, snapshotId: v.snapshotId })
       try {
         twin = await controlPlane.waitReady(created.id, 240_000)
       } catch (e) {
@@ -214,7 +234,8 @@ export class Sandbox extends BaseSandbox {
       try {
         return await createGateway(this, {
           template, opts, coords, controlPlane, twin, credential, egress, allowOut,
-          ownsTwin, installCaOpt: v.installCa !== false, dataPlaneEnv: v.dataPlaneEnv !== false,
+          ownsTwin, snapshotId: v.snapshotId,
+          installCaOpt: v.installCa !== false, dataPlaneEnv: v.dataPlaneEnv !== false,
         })
       } catch (e) {
         await cleanupTwin()
@@ -224,10 +245,11 @@ export class Sandbox extends BaseSandbox {
 
     // auto fell back to proxy: the pre-provisioned twin is unused (proxy
     // re-provisions in-sandbox), so drop it, then run the proxy path.
-    if (v.attachSandboxId) {
+    const unsupportedInProxy = v.attachSandboxId ? 'attachSandboxId' : v.snapshotId ? 'snapshotId' : null
+    if (unsupportedInProxy) {
       await cleanupTwin()
       throw new VerisGatewayNotOfferedError(
-        'gateway mode is unavailable and attachSandboxId cannot be honored in proxy mode — retry without attach or once the gateway ships',
+        `gateway mode is unavailable and ${unsupportedInProxy} cannot be honored in proxy mode — retry without it or once the gateway ships`,
         { phase: 'credential-mint', verisSandboxId: twin.id })
     }
     await cleanupTwin()
@@ -390,7 +412,7 @@ async function createGateway<S extends typeof BaseSandbox>(
   p: {
     template?: string; opts: SandboxOpts; coords: ResolvedCoordinates; controlPlane: ControlPlane
     twin: TwinSandbox; credential: EgressCredential; egress: EgressMode; allowOut: string[]
-    ownsTwin: boolean; installCaOpt: boolean; dataPlaneEnv: boolean
+    ownsTwin: boolean; installCaOpt: boolean; dataPlaneEnv: boolean; snapshotId?: string
   },
 ): Promise<InstanceType<S>> {
   // A caller-supplied egressProxy would fight the one this mode installs;
@@ -429,6 +451,7 @@ async function createGateway<S extends typeof BaseSandbox>(
     [META.twinId]: p.twin.id, [META.envId]: p.coords.environmentId ?? p.twin.environment_id,
     [META.apiBase]: p.coords.apiBase, [META.mode]: 'gateway', [META.egress]: p.egress,
     [META.ownsTwin]: String(p.ownsTwin), [META.allowOut]: JSON.stringify(p.allowOut),
+    ...(p.snapshotId ? { [META.snapshotId]: p.snapshotId } : {}),
   }
 
   const baseOpts: BaseSandboxOpts = { ...stripVeris(p.opts), envs: mergedEnvs, network, metadata }

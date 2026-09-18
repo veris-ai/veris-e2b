@@ -7,6 +7,7 @@ this covers what Veris adds.
 ## Contents
 
 - [Creating a sandbox](#creating-a-sandbox)
+  - [Starting from a known state](#starting-from-a-known-state)
 - [The `sbx.veris` API](#the-sbxveris-api)
 - [Receipts](#receipts)
 - [Webhooks](#webhooks)
@@ -35,6 +36,7 @@ const sbx = await Sandbox.create({
     installCa: true,                   // trust the interception CA (default true)
     dataPlaneEnv: true,                // inject DATABASE_URL etc. (default true)
     attachSandboxId: '…',              // reuse an existing Veris sandbox
+    snapshotId: '…',                   // boot the twin from a snapshot, not the baseline
   },
 })
 ```
@@ -51,9 +53,34 @@ const sbx = await Sandbox.create({
 | `installCa` | `true` | Install the interception CA into the sandbox's trust stores. |
 | `dataPlaneEnv` | `true` | Inject non-HTTP connection strings (e.g. `DATABASE_URL`) as env. |
 | `attachSandboxId` | — | Attach to an existing Veris sandbox instead of creating one. `kill()` will not delete it. |
+| `snapshotId` | — | Boot the twin from one of the environment's snapshots instead of its baseline, so every run starts from the same known state. Gateway mode only; mutually exclusive with `attachSandboxId`. |
 
 `Sandbox.connect(id)` reattaches to a running sandbox and restores all of the
 above from its metadata; you only need the E2B sandbox id and your API key.
+
+### Starting from a known state
+
+A twin booted from the environment's baseline starts wherever that environment
+starts. `snapshotId` pins it instead to a snapshot you captured earlier, so a
+suite, a benchmark, or a person exploring by hand all begin from the same rows:
+
+```ts
+const sbx = await Sandbox.create({
+  veris: { environmentId: 'env_…', snapshotId: 'snap_…' },
+})
+```
+
+The snapshot must belong to that environment — the control plane refuses one
+that does not, and the error names the snapshot rather than the environment.
+
+`snapshotId` is gateway-only and cannot be combined with `attachSandboxId`: an
+attached twin is already running at some state, and re-booting it from a
+snapshot is a contradiction rather than a refinement. In proxy mode the twin is
+deployed from inside the sandbox, with no snapshot in that contract, so the
+option is refused there instead of silently booting a baseline.
+
+The snapshot is recorded in the sandbox's E2B metadata as `veris_snapshot_id`,
+so a running sandbox can always say what state it started from.
 
 ## The `sbx.veris` API
 

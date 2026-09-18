@@ -47,3 +47,32 @@ describe('extendTtl tolerates a control plane without the contract', () => {
     await expect(cp().extendTtl('env_1', 'sb_1', 20)).resolves.toBeUndefined()
   })
 })
+
+describe('createTwin snapshot pinning', () => {
+  it('sends snapshot_id when a snapshot is named', async () => {
+    let body: Record<string, unknown> = {}
+    mockFetch((_u, init) => {
+      body = JSON.parse(String(init.body))
+      return { status: 201, body: { id: 'sb_1', environment_id: 'env_1', status: 'ready', services: [] } }
+    })
+    await cp().createTwin('env_1', { ttlMinutes: 20, snapshotId: 'snap_1' })
+    expect(body.snapshot_id).toBe('snap_1')
+    expect(body.ttl_minutes).toBe(20)
+  })
+
+  it('omits snapshot_id entirely when none is named (baseline boot)', async () => {
+    let body: Record<string, unknown> = {}
+    mockFetch((_u, init) => {
+      body = JSON.parse(String(init.body))
+      return { status: 201, body: { id: 'sb_1', environment_id: 'env_1', status: 'ready', services: [] } }
+    })
+    await cp().createTwin('env_1', { ttlMinutes: 20 })
+    expect('snapshot_id' in body).toBe(false)
+  })
+
+  it('names the snapshot in the error when the control plane refuses it', async () => {
+    mockFetch(() => ({ status: 422, body: { detail: 'snapshot belongs to another environment' } }))
+    await expect(cp().createTwin('env_1', { snapshotId: 'snap_other' }))
+      .rejects.toMatchObject({ message: expect.stringContaining('snap_other') })
+  })
+})
