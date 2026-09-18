@@ -58,6 +58,7 @@ class FakeSandbox:
     def __init__(self, answers: dict[str, tuple[str, str]] | None = None) -> None:
         self.commands = FakeCommands(answers)
         self.networks: list[dict[str, Any]] = []
+        self.sandbox_id = "e2b_sbx"
 
     def update_network(self, network: dict[str, Any]) -> None:
         self.networks.append(network)

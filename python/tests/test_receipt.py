@@ -6,27 +6,83 @@ import json
 
 import pytest
 
-from veris_e2b.errors import ReceiptIntegrityError
+from veris_e2b.errors import ReceiptIntegrityError, VerisError
 from veris_e2b.receipt import canary_command, canary_verdict, parse_requests_body, probe_canary
 
 
 class TestParsing:
-    def test_counts_and_types_the_rows(self):
-        count, entries = parse_requests_body(
-            {"requests": [{"method": "post", "path": "/v1/charges", "status": 200}]}
+    def test_counts_and_types_the_vendor_surface(self):
+        count, entries, total = parse_requests_body(
+            {
+                "requests": [
+                    {
+                        "id": 1,
+                        "method": "post",
+                        "path": "/v1/charges",
+                        "status": 200,
+                        "tier": "handler",
+                    }
+                ]
+            }
         )
-        assert count == 1
+        assert (count, total) == (1, 1)
         assert entries[0].method == "post"
         assert entries[0].status == 200
 
     def test_a_request_with_no_response_has_a_null_status(self):
         """A fault hang is a real outcome, not a missing row."""
-        _, entries = parse_requests_body({"requests": [{"method": "GET", "path": "/x"}]})
+        _, entries, _ = parse_requests_body(
+            {
+                "requests": [
+                    {"id": 1, "method": "GET", "path": "/x", "status": None, "tier": "fault"}
+                ]
+            }
+        )
         assert entries[0].status is None
 
-    def test_a_body_with_no_requests_key_is_empty_not_an_error(self):
-        assert parse_requests_body({}) == (0, [])
-        assert parse_requests_body("nonsense") == (0, [])
+    def test_control_plane_chatter_is_not_traffic_the_code_made(self):
+        """Reading the receipt must not itself show up in the receipt."""
+        count, _, total = parse_requests_body(
+            {
+                "requests": [
+                    {
+                        "id": 1,
+                        "method": "GET",
+                        "path": "/veris/requests",
+                        "status": 200,
+                        "tier": "control",
+                    },
+                    {
+                        "id": 2,
+                        "method": "GET",
+                        "path": "/v1/customers",
+                        "status": 200,
+                        "tier": "handler",
+                    },
+                ]
+            }
+        )
+        assert (count, total) == (1, 2)
+
+    def test_a_malformed_body_is_a_failure_not_empty_evidence(self):
+        """'Zero requests' and 'we could not tell' must never print the same."""
+        for body in (
+            {},
+            "nonsense",
+            {
+                "requests": [
+                    {"id": 0, "method": "GET", "path": "/x", "tier": "handler", "status": 200}
+                ]
+            },
+        ):
+            with pytest.raises(VerisError):
+                parse_requests_body(body)
+
+    def test_a_row_missing_its_tier_is_refused(self):
+        with pytest.raises(VerisError, match="tier"):
+            parse_requests_body(
+                {"requests": [{"id": 1, "method": "GET", "path": "/x", "status": 200}]}
+            )
 
 
 class TestCanaryCommand:

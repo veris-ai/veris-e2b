@@ -33,17 +33,22 @@ from .errors import (
 )
 from .network import EgressMode
 from .receipt import Receipt, ReceiptEntry, ReceiptLeak, ReceiptRequest
+from .run_receipt import ReceiptBaseline
 from .sandbox import Sandbox
+from .service_control import ControlMethod, ControlResource
 from .veris_api import AsyncVerisApi, TouchMatcher, VerisApi
 from .version import SDK_VERSION
 
 __all__ = [
     "AsyncSandbox",
     "AsyncVerisApi",
+    "ControlMethod",
+    "ControlResource",
     "EgressCredential",
     "EgressMode",
     "MissingCredentialsError",
     "Receipt",
+    "ReceiptBaseline",
     "ReceiptEntry",
     "ReceiptIntegrityError",
     "ReceiptLeak",

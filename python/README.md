@@ -127,17 +127,20 @@ sandbox can always say what state it started from.
 ## The `sbx.veris` API
 
 ```python
-sbx.veris.receipt()  # all services: counts + typed requests
-sbx.veris.receipt("stripe")  # one service
-sbx.veris.assert_touched("stripe")  # raises if it was never called
-sbx.veris.services()  # what's running in this twin
-sbx.veris.get_data_plane_env()  # {"DATABASE_URL": "postgresql://…"}
-sbx.veris.get_trust_env()  # CA paths, for processes that scrub env
-sbx.veris.deliver_to(3000)  # send webhooks to this sandbox
-sbx.veris.update_network({...})  # change egress without losing interception
+sbx.veris.receipt()                    # all services: counts + typed requests
+sbx.veris.receipt("stripe")            # one service
+sbx.veris.receipt_baseline()           # mark the log before a run
+sbx.veris.receipt_since(baseline)      # only what this run did
+sbx.veris.assert_touched("stripe")     # raises if it was never called
+sbx.veris.control("stripe", "manual")  # read a service's control resources
+sbx.veris.services()                   # what's running in this twin
+sbx.veris.get_data_plane_env()         # {"DATABASE_URL": "postgresql://…"}
+sbx.veris.get_trust_env()              # CA paths, for processes that scrub env
+sbx.veris.deliver_to(3000)             # send webhooks to this sandbox
+sbx.veris.update_network({...})        # change egress without losing interception
 
-sbx.veris_sandbox_id  # the Veris twin backing this sandbox
-sbx.veris_mode  # "gateway"
+sbx.veris_sandbox_id                   # the Veris twin backing this sandbox
+sbx.veris_mode                         # "gateway"
 ```
 
 `AsyncSandbox` exposes the same names, awaited.
@@ -146,15 +149,55 @@ sbx.veris_mode  # "gateway"
 
 ```python
 receipt = sbx.veris.receipt()
-receipt.services["stripe"].requests  # 3
-receipt.integrity  # "verified" — the tunnel was re-proven just now
-receipt.leaks  # [] in strict mode
+receipt.services["stripe"].requests   # 3
+receipt.integrity                     # "verified" — the tunnel was re-proven just now
+receipt.leaks                         # [] in strict mode
+receipt.services["stripe"].capped     # False — the whole log was read
 ```
 
 `integrity` is `"verified"` only when the canary probe confirmed egress is still
 tunneled at read time. `leaks` names blind spots the current egress mode genuinely
 has (`udp-quic-possible`, `ech-possible`) rather than implying a receipt sees
 everything.
+
+`capped` is the third thing to read. The log is paged, and a read that stops before
+the log does reports a **floor**, not a count — `capped` is then `True` and
+`incomplete_reason` says which limit it hit. `assert_touched` treats that as
+insufficient evidence rather than as an untouched dependency, because "we could not
+see them" and "it was never called" are different failures.
+
+### Run-scoped receipts
+
+A twin you **attached** to already has a log. Counting all of it credits your run
+with traffic from before it began — so mark the log first, and read only past the
+mark:
+
+```python
+baseline = sbx.veris.receipt_baseline()      # before the run
+...                                          # the run
+receipt = sbx.veris.receipt_since(baseline)
+receipt.services["stripe"].requests          # this run's calls, and only these
+```
+
+The baseline is anchored by a unique control request, so it survives a reset that
+preserves numeric ids, and `receipt_since` revalidates it *after* reading — a reset
+part-way through invalidates the whole measurement rather than half of it. It is
+plain data (`baseline.to_dict()` / `ReceiptBaseline.from_dict()`), so a run can
+outlive the process that started it.
+
+### Reading and seeding a service by hand
+
+```python
+sbx.veris.control("stripe", "manual")    # how this twin behaves
+sbx.veris.control("stripe", "schema")    # its shape
+sbx.veris.control("stripe", "data")      # its seed state
+sbx.veris.control("stripe", "data", method="PATCH", body={...})   # change it
+```
+
+`manual`, `schema`, `operations`, `data` and `requests` are the whole surface, and
+only `data` accepts a write — everything else describes the twin rather than its
+contents. Lifecycle verbs are deliberately absent: you own the sandbox, not the
+twin's existence.
 
 ### Webhooks
 

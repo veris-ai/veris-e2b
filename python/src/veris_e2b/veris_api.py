@@ -29,6 +29,19 @@ from .receipt import (
     probe_canary,
     probe_canary_async,
 )
+from .run_receipt import (
+    ReceiptBaseline,
+    capture_baseline,
+    capture_baseline_async,
+    validate_baseline,
+    validate_baseline_async,
+)
+from .service_control import (
+    ControlMethod,
+    ControlResource,
+    service_control,
+    service_control_async,
+)
 from .trust import vendored_trust_env
 
 #: The delivery probe asks each service whether it can reach the destination.
@@ -73,6 +86,28 @@ def _leaks(egress: EgressMode) -> list[ReceiptLeak]:
     """Open egress lets a QUIC or ECH client reach a real vendor unseen; strict
     fails both closed, so its receipt has no known blind spots."""
     return ["udp-quic-possible", "ech-possible"] if egress == "open" else []
+
+
+def _http_services(services: Sequence[ServiceInfo]) -> list[ServiceInfo]:
+    """Only a service with an http control plane has a readable trace log."""
+    return [svc for svc in services if is_http_url(svc.control_url)]
+
+
+def _unknown_http_service(service: str) -> VerisError:
+    return VerisError(f"unknown HTTP service {service!r}", phase="receipt")
+
+
+def _no_canary() -> VerisError:
+    return VerisError(
+        "gateway receipt integrity unavailable: no canary credential; reconnect before reading",
+        phase="receipt",
+    )
+
+
+def _incomplete(service: str) -> VerisError:
+    return VerisError(
+        f"receipt for {service!r} is incomplete; insufficient evidence", phase="receipt"
+    )
 
 
 def _unknown_service(service: str, services: Sequence[ServiceInfo], twin_id: str) -> VerisError:
@@ -130,32 +165,104 @@ class VerisApi:
         """What is running in this twin."""
         return self._ctx.control_plane.services(self._ctx.twin_id)  # type: ignore[union-attr]
 
+    def _verify_integrity(self) -> None:
+        """No count is trusted until the tunnel is re-proven."""
+        if not self._ctx.canary_host:
+            raise _no_canary()
+        probe_canary(
+            self._ctx.sandbox, self._ctx.canary_host, self._ctx.twin_id, self._ctx.ca_cert_path
+        )
+
     def receipt(self, service: str | None = None) -> Receipt | ReceiptEntry:
         """What the twin actually received. One service's entry, or all of them.
 
         The canary proves egress is still tunneled before any count is trusted —
         a receipt from an un-tunneled sandbox would lie.
         """
-        if self._ctx.canary_host:
-            probe_canary(
-                self._ctx.sandbox, self._ctx.canary_host, self._ctx.twin_id, self._ctx.ca_cert_path
-            )
+        self._verify_integrity()
         services = self.services()
         if service is not None:
             found = next((s for s in services if s.name == service), None)
             if found is None:
                 raise _unknown_service(service, services, self._ctx.twin_id)
-            return fetch_receipt_entry(found, self._ctx.http)
+            return fetch_receipt_entry(found, client=self._ctx.http)
         entries = {
-            svc.name: fetch_receipt_entry(svc, self._ctx.http)
-            for svc in services
-            if is_http_url(svc.control_url)
+            svc.name: fetch_receipt_entry(svc, client=self._ctx.http)
+            for svc in _http_services(services)
         }
         return Receipt(
             services=entries,
             mode="gateway",
             integrity="verified",
             leaks=_leaks(self._ctx.egress),
+        )
+
+    def receipt_baseline(self) -> ReceiptBaseline:
+        """Mark where every service's log stands, before the run begins.
+
+        A twin that was attached rather than freshly created already has a log;
+        counting all of it would credit this run with someone else's traffic.
+        """
+        self._verify_integrity()
+        return capture_baseline(
+            self._ctx.twin_id,
+            self._ctx.sandbox.sandbox_id,
+            _http_services(self.services()),
+            self._ctx.http,
+        )
+
+    def receipt_since(self, baseline: ReceiptBaseline, service: str | None = None) -> Receipt:
+        """What the twin received since the baseline — this run's traffic alone."""
+        self._verify_integrity()
+        services = _http_services(self.services())
+        if service is not None and not any(svc.name == service for svc in services):
+            raise _unknown_http_service(service)
+        validate_baseline(
+            baseline,
+            self._ctx.twin_id,
+            self._ctx.sandbox.sandbox_id,
+            services,
+            self._ctx.http,
+        )
+        selected = services if service is None else [s for s in services if s.name == service]
+        entries = {
+            svc.name: fetch_receipt_entry(
+                svc, baseline.services[svc.name].id, client=self._ctx.http
+            )
+            for svc in selected
+        }
+        # A reset during the read invalidates the whole measurement, including
+        # the pages fetched before history disappeared.
+        validate_baseline(
+            baseline,
+            self._ctx.twin_id,
+            self._ctx.sandbox.sandbox_id,
+            _http_services(self.services()),
+            self._ctx.http,
+        )
+        return Receipt(
+            services=entries,
+            mode="gateway",
+            integrity="verified",
+            leaks=_leaks(self._ctx.egress),
+        )
+
+    def control(
+        self,
+        service: str,
+        resource: ControlResource,
+        *,
+        method: ControlMethod = "GET",
+        query: Mapping[str, str] | None = None,
+        body: Any = None,
+    ) -> Any:
+        """Read (or, for ``data``, write) one of a service's control resources."""
+        services = self.services()
+        found = next((s for s in services if s.name == service), None)
+        if found is None:
+            raise _unknown_service(service, services, self._ctx.twin_id)
+        return service_control(
+            found, resource, method=method, query=query, body=body, client=self._ctx.http
         )
 
     def assert_touched(self, service: str, matcher: TouchMatcher | None = None) -> None:
@@ -168,6 +275,10 @@ class VerisApi:
         assert isinstance(entry, ReceiptEntry)  # receipt(str) always returns one
         need = matcher.min_requests if matcher else 1
         matched = _match(entry, matcher)
+        # A capped read is a floor, so "fewer than needed" may only mean "we did
+        # not see them" — a different failure from a dependency never called.
+        if matched < need and entry.capped:
+            raise _incomplete(service)
         if matched < need:
             raise _untouched(service, matcher, matched, need, self._ctx.twin_id)
 
@@ -270,20 +381,24 @@ class AsyncVerisApi:
     async def services(self) -> list[ServiceInfo]:
         return await self._ctx.control_plane.services(self._ctx.twin_id)  # type: ignore[union-attr]
 
+    async def _verify_integrity(self) -> None:
+        if not self._ctx.canary_host:
+            raise _no_canary()
+        await probe_canary_async(
+            self._ctx.sandbox, self._ctx.canary_host, self._ctx.twin_id, self._ctx.ca_cert_path
+        )
+
     async def receipt(self, service: str | None = None) -> Receipt | ReceiptEntry:
-        if self._ctx.canary_host:
-            await probe_canary_async(
-                self._ctx.sandbox, self._ctx.canary_host, self._ctx.twin_id, self._ctx.ca_cert_path
-            )
+        await self._verify_integrity()
         services = await self.services()
         if service is not None:
             found = next((s for s in services if s.name == service), None)
             if found is None:
                 raise _unknown_service(service, services, self._ctx.twin_id)
-            return await fetch_receipt_entry_async(found, self._ctx.http)
-        http_services = [svc for svc in services if is_http_url(svc.control_url)]
+            return await fetch_receipt_entry_async(found, client=self._ctx.http)
+        http_services = _http_services(services)
         fetched = await asyncio.gather(
-            *(fetch_receipt_entry_async(svc, self._ctx.http) for svc in http_services)
+            *(fetch_receipt_entry_async(svc, client=self._ctx.http) for svc in http_services)
         )
         return Receipt(
             services={svc.name: entry for svc, entry in zip(http_services, fetched, strict=True)},
@@ -292,11 +407,75 @@ class AsyncVerisApi:
             leaks=_leaks(self._ctx.egress),
         )
 
+    async def receipt_baseline(self) -> ReceiptBaseline:
+        """Mark where every service's log stands, before the run begins."""
+        await self._verify_integrity()
+        return await capture_baseline_async(
+            self._ctx.twin_id,
+            self._ctx.sandbox.sandbox_id,
+            _http_services(await self.services()),
+            self._ctx.http,
+        )
+
+    async def receipt_since(self, baseline: ReceiptBaseline, service: str | None = None) -> Receipt:
+        """What the twin received since the baseline — this run's traffic alone."""
+        await self._verify_integrity()
+        services = _http_services(await self.services())
+        if service is not None and not any(svc.name == service for svc in services):
+            raise _unknown_http_service(service)
+        await validate_baseline_async(
+            baseline, self._ctx.twin_id, self._ctx.sandbox.sandbox_id, services, self._ctx.http
+        )
+        selected = services if service is None else [s for s in services if s.name == service]
+        fetched = await asyncio.gather(
+            *(
+                fetch_receipt_entry_async(
+                    svc, baseline.services[svc.name].id, client=self._ctx.http
+                )
+                for svc in selected
+            )
+        )
+        # A reset during the read invalidates the whole measurement, including
+        # the pages fetched before history disappeared.
+        await validate_baseline_async(
+            baseline,
+            self._ctx.twin_id,
+            self._ctx.sandbox.sandbox_id,
+            _http_services(await self.services()),
+            self._ctx.http,
+        )
+        return Receipt(
+            services={svc.name: entry for svc, entry in zip(selected, fetched, strict=True)},
+            mode="gateway",
+            integrity="verified",
+            leaks=_leaks(self._ctx.egress),
+        )
+
+    async def control(
+        self,
+        service: str,
+        resource: ControlResource,
+        *,
+        method: ControlMethod = "GET",
+        query: Mapping[str, str] | None = None,
+        body: Any = None,
+    ) -> Any:
+        """Read (or, for ``data``, write) one of a service's control resources."""
+        services = await self.services()
+        found = next((s for s in services if s.name == service), None)
+        if found is None:
+            raise _unknown_service(service, services, self._ctx.twin_id)
+        return await service_control_async(
+            found, resource, method=method, query=query, body=body, client=self._ctx.http
+        )
+
     async def assert_touched(self, service: str, matcher: TouchMatcher | None = None) -> None:
         entry = await self.receipt(service)
         assert isinstance(entry, ReceiptEntry)
         need = matcher.min_requests if matcher else 1
         matched = _match(entry, matcher)
+        if matched < need and entry.capped:
+            raise _incomplete(service)
         if matched < need:
             raise _untouched(service, matcher, matched, need, self._ctx.twin_id)
 
