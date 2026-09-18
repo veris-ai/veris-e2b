@@ -22,3 +22,12 @@ e2b-opencode/.opencode/plugin/**/*.js.map
 # npm pack output, produced by the release workflow and by hand when checking
 # what actually ships.
 *.tgz
+
+# Python: the venv, bytecode and tool caches. uv.lock IS committed — CI runs
+# `uv sync --locked`, so the lockfile is the contract, not an artifact.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
