@@ -30,6 +30,24 @@ jobs:
       - run: npm test
       - run: npm run test:packages
 
+  python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.1.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
+      # --locked: the lockfile is the contract, so a drifted pyproject fails the
+      # run rather than silently resolving something else in CI.
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest
+
   # Lints the PR title, not the commits in the PR. This repo squash-merges --
   # every commit on main carries a `(#N)` -- so the PR title is the subject that
   # actually lands in history, and the individual commit messages are discarded

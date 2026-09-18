@@ -134,6 +134,51 @@ Pre-1.0 the caret does the lockstep enforcement for free: `^0.1.0` resolves
 against. At `1.0.0` that stops being true, and `scripts/version.mjs` refuses to
 write a 1.x version until it is changed to emit an exact pin instead.
 
+### Releasing the Python package
+
+`veris-e2b` on PyPI versions **independently** of the npm pair. They share no
+dependency edge, so lockstep would only mean burning a version on one package
+every time the other changed.
+
+```sh
+cd python
+uv version 0.2.0              # writes pyproject.toml
+uv lock                       # the lockfile records the version too
+git commit -am "chore(python): 0.2.0"   # PR, merge
+```
+
+Then: **Actions → release-python → Run workflow**. It re-derives the version from
+`python/pyproject.toml`, refuses to proceed if an override disagrees with the
+file, runs lint and tests against the locked environment, builds the wheel and
+sdist, asserts `py.typed` is in the wheel and the README is in the sdist,
+publishes to PyPI, then tags `python-v0.2.0` and creates the GitHub release.
+`dry_run: true` does everything except the publish and the release.
+
+The tag is prefixed because `v0.2.0` belongs to the npm pair. Two ecosystems
+minting the same tag name is a collision waiting for the first release where the
+numbers happen to line up.
+
+Versions are PEP 440, not semver: `0.2.0rc1`, not `0.2.0-rc.1`. The workflow
+rejects the semver spelling at the resolve step rather than after the build, and
+treats anything that is not a plain `X.Y.Z` as a GitHub prerelease — which
+matches pip, since it will not install a prerelease without `--pre`.
+
+Publishing is PyPI **trusted publishing** (OIDC) — no token, no secret — pinned to
+this repo and to the workflow filename `release-python.yml`. Renaming that file
+breaks publishing silently until the PyPI-side config is updated. Because the
+project does not exist on PyPI before the first release, that first one needs a
+**pending publisher** registered at
+<https://pypi.org/manage/account/publishing/>: project `veris-e2b`, owner
+`veris-ai`, repo `veris-e2b`, workflow `release-python.yml`. PyPI turns it into a
+normal publisher the moment the first version lands.
+
+### Re-running a failed Python release
+
+Press the button again. `uv publish --check-url` skips a file PyPI already has
+instead of failing on the duplicate, and the tag and release steps check before
+they write, so a run that published but died before tagging is finished by a
+re-run rather than by hand.
+
 ## Conventions
 
 - [Conventional Commits](https://www.conventionalcommits.org/) for commit

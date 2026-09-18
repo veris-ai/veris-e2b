@@ -1,0 +1,59 @@
+[project]
+name = "veris-e2b"
+version = "0.1.0"
+description = "Veris dependency-sandbox interception for E2B: a drop-in Sandbox subclass whose vendor API calls are answered by stateful Veris twins. Unmodified code, real hostnames, receipts."
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "Veris AI" }]
+requires-python = ">=3.11"
+keywords = ["veris", "e2b", "sandbox", "integration-testing", "agents", "mock"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+dependencies = [
+    "e2b>=2.37,<3",
+    "httpx>=0.28.1,<1",
+]
+
+[project.urls]
+Homepage = "https://github.com/veris-ai/veris-e2b"
+Repository = "https://github.com/veris-ai/veris-e2b"
+Issues = "https://github.com/veris-ai/veris-e2b/issues"
+
+[build-system]
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.8",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "T20"]
+ignore = ["E501"]  # the formatter owns line length
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.ruff.format]
+# Ruff formats ```python blocks inside Markdown too, which collapses the aligned
+# comment columns the README uses to present the API as a table. That is prose
+# losing to a code formatter; the README is documentation, not source.
+exclude = ["*.md"]
