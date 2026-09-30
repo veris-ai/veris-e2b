@@ -4,9 +4,10 @@ Split sandboxes serve ``/veris/*`` on ``/c/<sandbox>/<svc>`` and require the sam
 ``X-API-Key`` the SDK sends to ``/v1``; the data-plane ``url`` and the vendor
 hostnames it answers for are not authenticated and must never see the key —
 they are reachable from the code under test, which is the thing being tested,
-not a party to trust with the org's credential. Older (``control_auth: null``)
-sandboxes still serve a keyless control URL; sending the key there is harmless,
-so the SDK sends it whenever it has one.
+not a party to trust with the org's credential. The key is sent only when the
+service advertises ``control_auth == "api_key"``: on an older or pinned sandbox
+(``control_auth`` null or absent, or an API that predates the field) the
+``control_url`` *is* the ``/s/`` data URL — the twin itself — and gets no key.
 
 Every control call therefore goes through :func:`control_headers`, which only
 attaches the key when the request URL is on the control URL's own origin and
@@ -51,6 +52,11 @@ def is_control_request(url: str, control_url: str) -> bool:
     return httpx.URL(url).path.startswith(prefix)
 
 
+def uses_api_key(service: ServiceInfo) -> bool:
+    """Whether this service's ``control_url`` is the keyed kind."""
+    return service.control_auth == "api_key"
+
+
 def control_headers(
     service: ServiceInfo,
     url: str,
@@ -59,7 +65,7 @@ def control_headers(
 ) -> dict[str, str]:
     """Headers for one request to ``url`` on behalf of ``service``'s control plane."""
     headers = dict(extra or {})
-    if api_key and is_control_request(url, service.control_url):
+    if api_key and uses_api_key(service) and is_control_request(url, service.control_url):
         headers[API_KEY_HEADER] = api_key
     return headers
 
@@ -70,7 +76,12 @@ def raise_for_control_auth(
     """Turn a control-plane 401 into an error that names the credential."""
     if status_code != 401:
         return
-    sent = "was rejected" if api_key else "was not sent (no API key available)"
+    if not uses_api_key(service):
+        sent = "was not sent (the service does not advertise control_auth: 'api_key')"
+    elif api_key:
+        sent = "was rejected"
+    else:
+        sent = "was not sent (no API key available)"
     raise VerisControlAuthError(
         f"service {service.name!r} control plane refused {what} (401): the Veris API key "
         f"{sent} — check VERIS_API_KEY / VerisOpts.api_key, and that the key belongs to "

@@ -97,11 +97,43 @@ describe('keyed control URL', () => {
     expect(controlHeaders(SVC, url, KEY)).toEqual({})
   })
 
-  it('attaches it under the control URL, and to a legacy keyless one too', () => {
+  it("attaches it under the control URL only when control_auth is 'api_key'", () => {
     expect(controlHeaders(SVC, `${CONTROL}/veris/requests`, KEY, { A: 'b' })).toEqual({ A: 'b', 'X-API-Key': KEY })
-    const legacy = { ...SVC, control_url: DATA, control_auth: null }
-    expect(controlHeaders(legacy, `${DATA}/veris/requests`, KEY)).toEqual({ 'X-API-Key': KEY })
     expect(controlHeaders(SVC, `${CONTROL}/veris/requests`, undefined)).toEqual({})
+    const { control_auth: _omit, ...absent } = SVC
+    for (const legacy of [{ ...SVC, control_url: DATA, control_auth: null }, { ...absent, control_url: DATA }, { ...SVC, control_auth: 'other' }]) {
+      expect(controlHeaders(legacy, `${legacy.control_url}/veris/requests`, KEY, { A: 'b' })).toEqual({ A: 'b' })
+    }
+  })
+
+  it.each([['null', null], ['absent', undefined]])('sends no key to a legacy control URL (control_auth %s)', async (_label, auth) => {
+    const seen = splitTwin()
+    const legacy: ServiceInfo = { ...SVC, control_url: DATA, control_auth: auth }
+    if (auth === undefined) delete legacy.control_auth
+    // The legacy twin serves /veris/* keyless on /s/.
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+      const url = new URL(String(input))
+      seen.push({ url, method: init.method ?? 'GET', headers: new Headers(init.headers), redirect: init.redirect })
+      if (url.pathname.endsWith('/veris/requests')) return Response.json({ requests: [] })
+      if (url.pathname.endsWith('/veris/client/probe')) return Response.json({ answered: true })
+      return Response.json({ ok: true })
+    }))
+    const sdk = new VerisApiImpl({
+      sandbox: { sandboxId: 'box', getHost: (port: number) => `${port}-sbx.e2b.app`,
+        commands: { run: async () => ({ stdout: JSON.stringify({ veris_sandbox_id: 'sb_1' }) }) } },
+      controlPlane: { apiKey: KEY, services: async () => [legacy], updateSandbox: async () => {} },
+      twinId: 'sb_1', environmentId: 'env', mode: 'gateway', egress: 'strict', allowOut: [],
+      canaryHost: 'canary.invalid', ownsTwin: true,
+    } as never)
+    await sdk.receipt('stripe')
+    for (const resource of ['manual', 'schema', 'operations', 'data', 'requests'] as const) await sdk.control('stripe', resource)
+    await sdk.deliverTo(3000)
+    expect(seen.length).toBeGreaterThan(0)
+    for (const s of seen) {
+      expect(s.url.href.startsWith(`${DATA}/veris/`)).toBe(true)
+      expect(s.headers.has('x-api-key')).toBe(false)
+      expect(s.redirect).toBe('error')
+    }
   })
 
   it.each([

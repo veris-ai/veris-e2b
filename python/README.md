@@ -200,12 +200,13 @@ contents. Lifecycle verbs are deliberately absent: you own the sandbox, not the
 twin's existence.
 
 Every control call — receipts, baselines, `control`, and the `deliver_to`
-reachability probe — goes to the service's `control_url` with your Veris API key
-as `X-API-Key`. Split sandboxes serve `/veris/*` on a keyed
-`/c/<sandbox>/<service>` URL (`ServiceInfo.control_auth == "api_key"`) and answer
-`/veris/*` on the data-plane `url` and on vendor hostnames with the vendor's 404;
-older sandboxes (`control_auth is None`) still serve a keyless control URL, where
-the key is harmless. The key is only attached to a URL under the service's own
+reachability probe — goes to the service's `control_url`. Split sandboxes serve
+`/veris/*` on a keyed `/c/<sandbox>/<service>` URL
+(`ServiceInfo.control_auth == "api_key"`) and answer `/veris/*` on the data-plane
+`url` and on vendor hostnames with the vendor's 404; there the SDK sends your
+Veris API key as `X-API-Key`. When `control_auth is None` (older or pinned
+sandboxes, or an API that predates the field), `control_url` is the keyless `/s/`
+data URL — the twin itself — and no key is sent. The key is only attached to a URL under the service's own
 `control_url` — never the data plane or a vendor host — and control requests never
 follow redirects, even on a client you supply. A refused key raises
 `VerisControlAuthError` naming the credential.

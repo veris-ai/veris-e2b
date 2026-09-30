@@ -6,8 +6,10 @@
 // code under test — the thing being tested, not a party to trust with the org's
 // key — so the key is attached only to a URL on the control URL's own origin
 // AND under its path, and every control request refuses redirects, so a 3xx
-// cannot walk the key anywhere else. Older sandboxes (control_auth: null) still
-// serve a keyless control URL; the key there is harmless, so it is always sent.
+// cannot walk the key anywhere else. And only when the service advertises
+// control_auth: 'api_key': on an older or pinned sandbox (control_auth null or
+// absent, or an API that predates the field) control_url IS the /s/ data URL —
+// the twin itself — and the key must not go there, so none is sent.
 import type { ServiceInfo } from './control-plane'
 import { VerisControlAuthError } from './errors'
 
@@ -29,17 +31,24 @@ export function isControlRequest(url: string | URL, controlUrl: string): boolean
   return target.pathname.startsWith(base.pathname.replace(/\/$/, '') + '/')
 }
 
+/** Whether this service's control_url is the keyed kind. */
+export function usesApiKey(svc: ServiceInfo): boolean {
+  return svc.control_auth === 'api_key'
+}
+
 export function controlHeaders(svc: ServiceInfo, url: string | URL, apiKey: string | undefined,
   extra: Record<string, string> = {}): Record<string, string> {
   const headers = { ...extra }
-  if (apiKey && isControlRequest(url, svc.control_url)) headers[API_KEY_HEADER] = apiKey
+  if (apiKey && usesApiKey(svc) && isControlRequest(url, svc.control_url)) headers[API_KEY_HEADER] = apiKey
   return headers
 }
 
 /** Turn a control-plane 401 into an error that names the credential. */
 export function throwForControlAuth(svc: ServiceInfo, status: number, what: string, apiKey: string | undefined): void {
   if (status !== 401) return
-  const sent = apiKey ? 'was rejected' : 'was not sent (no API key available)'
+  const sent = !usesApiKey(svc)
+    ? "was not sent (the service does not advertise control_auth: 'api_key')"
+    : apiKey ? 'was rejected' : 'was not sent (no API key available)'
   throw new VerisControlAuthError(
     `service '${svc.name}' control plane refused ${what} (401): the Veris API key ${sent} — ` +
     'check VERIS_API_KEY / veris.apiKey, and that the key belongs to the org that owns this sandbox',

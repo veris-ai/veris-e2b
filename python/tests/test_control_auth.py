@@ -201,7 +201,9 @@ class TestTheKeyGoesToTheControlUrl:
 
 
 class TestScoping:
-    SVC = ServiceInfo(name="stripe", status="ready", url=DATA, control_url=CONTROL)
+    SVC = ServiceInfo(
+        name="stripe", status="ready", url=DATA, control_url=CONTROL, control_auth="api_key"
+    )
 
     @pytest.mark.parametrize(
         "url",
@@ -257,8 +259,46 @@ class TestModel:
         assert ServiceInfo.from_dict(legacy).control_auth is None
         assert ServiceInfo.from_dict({**legacy, "control_auth": None}).control_auth is None
 
-    def test_a_legacy_keyless_control_url_still_gets_the_key(self):
-        """control_auth: null means /veris/* still lives on the /s/ URL; the key
-        there is harmless, and not sending it would break the day it flips."""
-        legacy = ServiceInfo(name="s", status="ready", url=DATA, control_url=DATA)
-        assert control_headers(legacy, f"{DATA}/veris/requests", KEY) == {"X-API-Key": KEY}
+    @pytest.mark.parametrize("auth", [None, "other"])
+    def test_a_legacy_keyless_control_url_gets_no_key(self, auth):
+        """control_auth null/absent means control_url is the /s/ data URL — the
+        twin itself — which must never see the org's key."""
+        legacy = ServiceInfo(
+            name="s", status="ready", url=DATA, control_url=DATA, control_auth=auth
+        )
+        assert control_headers(legacy, f"{DATA}/veris/requests", KEY, {"A": "b"}) == {"A": "b"}
+
+
+class TestLegacySandbox:
+    @pytest.mark.parametrize("auth", ["null", "absent"])
+    def test_no_control_call_carries_the_key(self, control_plane, fake_sandbox, auth):
+        service = {k: v for k, v in SPLIT_SERVICES[0].items() if k != "control_auth"}
+        service["control_url"] = DATA
+        if auth == "null":
+            service["control_auth"] = None
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "svc.api.veris.ai":
+                if request.url.path.endswith("/services"):
+                    return httpx.Response(200, json=[service])
+                return httpx.Response(200, json={"ok": True})
+            seen.append(request)
+            if request.url.path.endswith("/veris/requests"):
+                return httpx.Response(200, json={"requests": []})
+            if request.url.path.endswith("/veris/client/probe"):
+                return httpx.Response(200, json={"answered": True})
+            return httpx.Response(200, json={"ok": True})
+
+        twin = SplitTwin()
+        twin.handler = handler  # type: ignore[method-assign]
+        http = httpx.Client(transport=httpx.MockTransport(handler))
+        veris = VerisApi(_ctx(control_plane, fake_sandbox, twin, http=http))
+        veris.receipt("stripe")
+        for resource in ("manual", "schema", "operations", "data", "requests"):
+            veris.control("stripe", resource)
+        veris.deliver_to(3000)
+        assert seen
+        for request in seen:
+            assert str(request.url).startswith(f"{DATA}/veris/")
+            assert "x-api-key" not in request.headers
