@@ -203,6 +203,7 @@ E2B's, and each carries a `phase` naming where it died.
 | `ReceiptIntegrityError` | Interception could not be proven — a receipt read now would lie. |
 | `VerisUntouchedError` | `assertTouched` found no matching requests. |
 | `TwinExpiredError` | The Veris sandbox is gone (expired or deleted). |
+| `VerisControlAuthError` | A service's `control_url` refused the Veris API key (401) — check `VERIS_API_KEY` and that it belongs to the sandbox's org. The SDK sends the key only to each service's own `control_url`, never to its data-plane `url` or a vendor host. |
 | `TemplateUnsupportedError` | The template can't host the interception CA. |
 | `UnsupportedOperationError` | An operation that would break the one-sandbox-one-mock invariant, e.g. `fork()`. |
 

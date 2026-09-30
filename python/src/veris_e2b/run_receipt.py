@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from .control_auth import control_headers, raise_for_control_auth
 from .control_plane import ServiceInfo
 from .errors import VerisError
 from .receipt import RECEIPT_TIMEOUT_S, read_page, read_page_async
@@ -150,6 +151,8 @@ def capture_baseline(
     sandbox_id: str,
     services: Sequence[ServiceInfo],
     client: httpx.Client | None = None,
+    *,
+    api_key: str | None = None,
 ) -> ReceiptBaseline:
     """Mark where each service's log stands right now."""
     marks: dict[str, ServiceMark] = {}
@@ -158,15 +161,18 @@ def capture_baseline(
     try:
         for service in services:
             marker = str(uuid.uuid4())
+            url = _anchor_url(service)
             response = http.get(
-                _anchor_url(service),
-                headers={BASELINE_HEADER: marker},
+                url,
+                headers=control_headers(service, url, api_key, {BASELINE_HEADER: marker}),
                 timeout=RECEIPT_TIMEOUT_S,
+                follow_redirects=False,
             )
+            raise_for_control_auth(service, response.status_code, "GET /veris/schema", api_key)
             if response.status_code >= 300:
                 raise _anchor_failed(service.name, response.status_code)
             for attempt in range(ANCHOR_ATTEMPTS):
-                rows = read_page(service, {"limit": 1000, "order": "desc"}, http)
+                rows = read_page(service, {"limit": 1000, "order": "desc"}, http, api_key=api_key)
                 anchor = _anchor_of(rows, marker)
                 if anchor is not None:
                     marks[service.name] = ServiceMark(
@@ -190,6 +196,8 @@ async def capture_baseline_async(
     sandbox_id: str,
     services: Sequence[ServiceInfo],
     client: httpx.AsyncClient | None = None,
+    *,
+    api_key: str | None = None,
 ) -> ReceiptBaseline:
     import asyncio
     from contextlib import AsyncExitStack
@@ -201,15 +209,20 @@ async def capture_baseline_async(
         )
         for service in services:
             marker = str(uuid.uuid4())
+            url = _anchor_url(service)
             response = await http.get(
-                _anchor_url(service),
-                headers={BASELINE_HEADER: marker},
+                url,
+                headers=control_headers(service, url, api_key, {BASELINE_HEADER: marker}),
                 timeout=RECEIPT_TIMEOUT_S,
+                follow_redirects=False,
             )
+            raise_for_control_auth(service, response.status_code, "GET /veris/schema", api_key)
             if response.status_code >= 300:
                 raise _anchor_failed(service.name, response.status_code)
             for attempt in range(ANCHOR_ATTEMPTS):
-                rows = await read_page_async(service, {"limit": 1000, "order": "desc"}, http)
+                rows = await read_page_async(
+                    service, {"limit": 1000, "order": "desc"}, http, api_key=api_key
+                )
                 anchor = _anchor_of(rows, marker)
                 if anchor is not None:
                     marks[service.name] = ServiceMark(
@@ -229,12 +242,19 @@ def validate_baseline(
     sandbox_id: str,
     services: Sequence[ServiceInfo],
     client: httpx.Client | None = None,
+    *,
+    api_key: str | None = None,
 ) -> None:
     """Refuse a baseline whose session, services or history no longer match."""
     _shape_ok(baseline, twin_id, sandbox_id, services)
     for service in services:
         mark = _mark_ok(baseline, service)
-        rows = read_page(service, {"limit": 1, "order": "asc", "since_id": mark.id - 1}, client)
+        rows = read_page(
+            service,
+            {"limit": 1, "order": "asc", "since_id": mark.id - 1},
+            client,
+            api_key=api_key,
+        )
         _anchor_still_there(rows, mark)
 
 
@@ -244,11 +264,16 @@ async def validate_baseline_async(
     sandbox_id: str,
     services: Sequence[ServiceInfo],
     client: httpx.AsyncClient | None = None,
+    *,
+    api_key: str | None = None,
 ) -> None:
     _shape_ok(baseline, twin_id, sandbox_id, services)
     for service in services:
         mark = _mark_ok(baseline, service)
         rows = await read_page_async(
-            service, {"limit": 1, "order": "asc", "since_id": mark.id - 1}, client
+            service,
+            {"limit": 1, "order": "asc", "since_id": mark.id - 1},
+            client,
+            api_key=api_key,
         )
         _anchor_still_there(rows, mark)

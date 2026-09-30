@@ -4,6 +4,14 @@ Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing)
 
 ## 0.2.0 — Unreleased
 
+- Control calls authenticate to split sandboxes' keyed control URL. Every
+  `/veris/*` request (receipts, baselines, `control`, the `deliverTo` probe) now
+  sends the Veris API key as `X-API-Key`, only to the service's own
+  `control_url` (never the data-plane `url`, a vendor host or a redirect
+  target). `ServiceInfo.control_auth` (`'api_key'` | null) is modelled, and a
+  control-plane 401 raises `VerisControlAuthError` naming the credential.
+  Applies to the Python package too.
+
 - SDK receipts paginate by stable request ID, exclude control/probe evidence,
   and report incomplete windows. New baseline APIs detect reset/history loss and
   session replacement while retaining interception integrity and blind spots.

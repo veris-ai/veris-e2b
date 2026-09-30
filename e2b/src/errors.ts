@@ -73,3 +73,12 @@ export class TemplateUnsupportedError extends VerisError {}
 
 /** An inherited E2B operation that would break Veris's one-sandbox-one-twin invariant (e.g. fork). */
 export class UnsupportedOperationError extends VerisError {}
+
+/** A twin service's keyed control_url refused the Veris API key (HTTP 401). */
+export class VerisControlAuthError extends VerisError {
+  readonly service: string
+  constructor(message: string, service: string, opts: ConstructorParameters<typeof VerisError>[1] = {}) {
+    super(message, opts)
+    this.service = service
+  }
+}

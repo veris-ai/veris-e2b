@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from .control_auth import control_headers, raise_for_control_auth
 from .control_plane import AsyncControlPlane, ControlPlane, ServiceInfo
 from .errors import VerisError, VerisUntouchedError
 from .network import (
@@ -93,6 +94,27 @@ def _http_services(services: Sequence[ServiceInfo]) -> list[ServiceInfo]:
     return [svc for svc in services if is_http_url(svc.control_url)]
 
 
+def _probe_url(svc: ServiceInfo) -> str:
+    # The control plane, never the data url or a vendor host: on a split sandbox
+    # /veris/* there answers the vendor's 404, and the key must not go there.
+    return f"{svc.control_url.rstrip('/')}/veris/client/probe"
+
+
+def _probe_answer(svc: ServiceInfo, response: httpx.Response, api_key: str | None) -> Any:
+    """A service's verdict on the destination, or None when it gave none.
+
+    A refused key is not "could not reach your app": it would fail every probe
+    and send the caller hunting for a listener that is fine.
+    """
+    raise_for_control_auth(svc, response.status_code, "POST /veris/client/probe", api_key)
+    if response.status_code >= 300:
+        return None
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
 def _unknown_http_service(service: str) -> VerisError:
     return VerisError(f"unknown HTTP service {service!r}", phase="receipt")
 
@@ -151,6 +173,8 @@ class VerisApi:
 
     def __init__(self, ctx: VerisContext) -> None:
         self._ctx = ctx
+        #: Sent as X-API-Key to each service's control_url, and nowhere else.
+        self._api_key: str | None = ctx.control_plane.api_key
 
     @property
     def sandbox_id(self) -> str:
@@ -185,9 +209,9 @@ class VerisApi:
             found = next((s for s in services if s.name == service), None)
             if found is None:
                 raise _unknown_service(service, services, self._ctx.twin_id)
-            return fetch_receipt_entry(found, client=self._ctx.http)
+            return fetch_receipt_entry(found, client=self._ctx.http, api_key=self._api_key)
         entries = {
-            svc.name: fetch_receipt_entry(svc, client=self._ctx.http)
+            svc.name: fetch_receipt_entry(svc, client=self._ctx.http, api_key=self._api_key)
             for svc in _http_services(services)
         }
         return Receipt(
@@ -209,6 +233,7 @@ class VerisApi:
             self._ctx.sandbox.sandbox_id,
             _http_services(self.services()),
             self._ctx.http,
+            api_key=self._api_key,
         )
 
     def receipt_since(self, baseline: ReceiptBaseline, service: str | None = None) -> Receipt:
@@ -223,11 +248,12 @@ class VerisApi:
             self._ctx.sandbox.sandbox_id,
             services,
             self._ctx.http,
+            api_key=self._api_key,
         )
         selected = services if service is None else [s for s in services if s.name == service]
         entries = {
             svc.name: fetch_receipt_entry(
-                svc, baseline.services[svc.name].id, client=self._ctx.http
+                svc, baseline.services[svc.name].id, client=self._ctx.http, api_key=self._api_key
             )
             for svc in selected
         }
@@ -239,6 +265,7 @@ class VerisApi:
             self._ctx.sandbox.sandbox_id,
             _http_services(self.services()),
             self._ctx.http,
+            api_key=self._api_key,
         )
         return Receipt(
             services=entries,
@@ -262,7 +289,13 @@ class VerisApi:
         if found is None:
             raise _unknown_service(service, services, self._ctx.twin_id)
         return service_control(
-            found, resource, method=method, query=query, body=body, client=self._ctx.http
+            found,
+            resource,
+            method=method,
+            query=query,
+            body=body,
+            client=self._ctx.http,
+            api_key=self._api_key,
         )
 
     def assert_touched(self, service: str, matcher: TouchMatcher | None = None) -> None:
@@ -344,13 +377,18 @@ class VerisApi:
         answers: list[Any] = []
         try:
             for svc in services:
+                url = _probe_url(svc)
                 try:
                     response = client.post(
-                        f"{svc.control_url}/veris/client/probe", timeout=PROBE_TIMEOUT_S
+                        url,
+                        timeout=PROBE_TIMEOUT_S,
+                        headers=control_headers(svc, url, self._api_key),
+                        follow_redirects=False,
                     )
-                    answers.append(response.json() if response.status_code < 300 else None)
-                except (httpx.HTTPError, ValueError):
+                except httpx.HTTPError:
                     answers.append(None)
+                    continue
+                answers.append(_probe_answer(svc, response, self._api_key))
         finally:
             if self._ctx.http is None:
                 client.close()
@@ -369,6 +407,8 @@ class AsyncVerisApi:
 
     def __init__(self, ctx: VerisContext) -> None:
         self._ctx = ctx
+        #: Sent as X-API-Key to each service's control_url, and nowhere else.
+        self._api_key: str | None = ctx.control_plane.api_key
 
     @property
     def sandbox_id(self) -> str:
@@ -395,10 +435,15 @@ class AsyncVerisApi:
             found = next((s for s in services if s.name == service), None)
             if found is None:
                 raise _unknown_service(service, services, self._ctx.twin_id)
-            return await fetch_receipt_entry_async(found, client=self._ctx.http)
+            return await fetch_receipt_entry_async(
+                found, client=self._ctx.http, api_key=self._api_key
+            )
         http_services = _http_services(services)
         fetched = await asyncio.gather(
-            *(fetch_receipt_entry_async(svc, client=self._ctx.http) for svc in http_services)
+            *(
+                fetch_receipt_entry_async(svc, client=self._ctx.http, api_key=self._api_key)
+                for svc in http_services
+            )
         )
         return Receipt(
             services={svc.name: entry for svc, entry in zip(http_services, fetched, strict=True)},
@@ -415,6 +460,7 @@ class AsyncVerisApi:
             self._ctx.sandbox.sandbox_id,
             _http_services(await self.services()),
             self._ctx.http,
+            api_key=self._api_key,
         )
 
     async def receipt_since(self, baseline: ReceiptBaseline, service: str | None = None) -> Receipt:
@@ -424,13 +470,21 @@ class AsyncVerisApi:
         if service is not None and not any(svc.name == service for svc in services):
             raise _unknown_http_service(service)
         await validate_baseline_async(
-            baseline, self._ctx.twin_id, self._ctx.sandbox.sandbox_id, services, self._ctx.http
+            baseline,
+            self._ctx.twin_id,
+            self._ctx.sandbox.sandbox_id,
+            services,
+            self._ctx.http,
+            api_key=self._api_key,
         )
         selected = services if service is None else [s for s in services if s.name == service]
         fetched = await asyncio.gather(
             *(
                 fetch_receipt_entry_async(
-                    svc, baseline.services[svc.name].id, client=self._ctx.http
+                    svc,
+                    baseline.services[svc.name].id,
+                    client=self._ctx.http,
+                    api_key=self._api_key,
                 )
                 for svc in selected
             )
@@ -443,6 +497,7 @@ class AsyncVerisApi:
             self._ctx.sandbox.sandbox_id,
             _http_services(await self.services()),
             self._ctx.http,
+            api_key=self._api_key,
         )
         return Receipt(
             services={svc.name: entry for svc, entry in zip(selected, fetched, strict=True)},
@@ -466,7 +521,13 @@ class AsyncVerisApi:
         if found is None:
             raise _unknown_service(service, services, self._ctx.twin_id)
         return await service_control_async(
-            found, resource, method=method, query=query, body=body, client=self._ctx.http
+            found,
+            resource,
+            method=method,
+            query=query,
+            body=body,
+            client=self._ctx.http,
+            api_key=self._api_key,
         )
 
     async def assert_touched(self, service: str, matcher: TouchMatcher | None = None) -> None:
@@ -521,11 +582,17 @@ class AsyncVerisApi:
             return
 
         async def ask(svc: ServiceInfo, client: httpx.AsyncClient) -> Any:
+            url = _probe_url(svc)
             try:
-                response = await client.post(f"{svc.control_url}/veris/client/probe")
-                return response.json() if response.status_code < 300 else None
-            except (httpx.HTTPError, ValueError):
+                response = await client.post(
+                    url,
+                    timeout=PROBE_TIMEOUT_S,
+                    headers=control_headers(svc, url, self._api_key),
+                    follow_redirects=False,
+                )
+            except httpx.HTTPError:
                 return None
+            return _probe_answer(svc, response, self._api_key)
 
         if self._ctx.http is not None:
             answers = await asyncio.gather(*(ask(svc, self._ctx.http) for svc in services))

@@ -199,6 +199,17 @@ only `data` accepts a write — everything else describes the twin rather than i
 contents. Lifecycle verbs are deliberately absent: you own the sandbox, not the
 twin's existence.
 
+Every control call — receipts, baselines, `control`, and the `deliver_to`
+reachability probe — goes to the service's `control_url` with your Veris API key
+as `X-API-Key`. Split sandboxes serve `/veris/*` on a keyed
+`/c/<sandbox>/<service>` URL (`ServiceInfo.control_auth == "api_key"`) and answer
+`/veris/*` on the data-plane `url` and on vendor hostnames with the vendor's 404;
+older sandboxes (`control_auth is None`) still serve a keyless control URL, where
+the key is harmless. The key is only attached to a URL under the service's own
+`control_url` — never the data plane or a vendor host — and control requests never
+follow redirects, even on a client you supply. A refused key raises
+`VerisControlAuthError` naming the credential.
+
 ### Webhooks
 
 If your app *receives* callbacks, tell the mocks where to deliver them:
@@ -260,6 +271,7 @@ e2b's, and each carries a `phase` naming where it died.
 | `ReceiptIntegrityError` | Interception could not be proven — a receipt read now would lie. |
 | `VerisUntouchedError` | `assert_touched` found no matching requests. |
 | `TwinExpiredError` | The Veris sandbox is gone (expired or deleted). |
+| `VerisControlAuthError` | A service's control URL refused the Veris API key (401) — check `VERIS_API_KEY` and that it belongs to the sandbox's org. |
 | `TemplateUnsupportedError` | The template can't host the interception CA. |
 | `UnsupportedOperationError` | An operation that would break the one-sandbox-one-twin invariant, e.g. `fork()`. |
 

@@ -54,10 +54,15 @@ class ServiceInfo:
     #: What the code under test points at: a gateway URL for http services, a DSN
     #: for e.g. postgres.
     url: str
-    #: Where ``/veris/*`` lives — always an http URL.
+    #: Where ``/veris/*`` lives — always an http URL. On a split sandbox this
+    #: is ``/c/<sandbox>/<svc>`` on the same host as ``url`` and requires the
+    #: Veris API key; the SDK sends it there and only there.
     control_url: str
     env_hint: str | None = None
     routes: list[RouteEntry] | None = None
+    #: How ``control_url`` authenticates: ``"api_key"`` on split sandboxes,
+    #: ``None`` on older ones whose control URL is still keyless.
+    control_auth: str | None = None
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ServiceInfo:
@@ -69,6 +74,7 @@ class ServiceInfo:
             control_url=str(data.get("control_url", "")),
             env_hint=data.get("env_hint"),
             routes=[RouteEntry.from_dict(r) for r in raw_routes] if raw_routes else None,
+            control_auth=data.get("control_auth"),
         )
 
 
@@ -134,11 +140,18 @@ class _ControlPlaneShared:
 
     def __init__(self, *, api_key: str, api_base: str, sdk_version: str) -> None:
         self.api_base = api_base.rstrip("/")
+        self._api_key = api_key
         self._headers = {
             "X-API-Key": api_key,
             "X-Veris-SDK": sdk_version,
             "Content-Type": "application/json",
         }
+
+    @property
+    def api_key(self) -> str:
+        """The key this client authenticates with — also what a twin service's
+        keyed ``control_url`` expects."""
+        return self._api_key
 
     # -- request shaping ---------------------------------------------------
 

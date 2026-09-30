@@ -81,3 +81,16 @@ class TemplateUnsupportedError(VerisError):
 
 class UnsupportedOperationError(VerisError):
     """An inherited E2B operation that would break the one-sandbox-one-twin invariant."""
+
+
+class VerisControlAuthError(VerisError):
+    """A twin service's control plane refused the Veris API key (HTTP 401).
+
+    Split sandboxes serve ``/veris/*`` on a keyed ``control_url`` that answers
+    401 to a missing or wrong ``X-API-Key``; this names that credential rather
+    than reporting a bare status code.
+    """
+
+    def __init__(self, message: str, service: str, **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+        self.service = service

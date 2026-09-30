@@ -23,8 +23,9 @@ from typing import Any, Literal
 
 import httpx
 
+from .control_auth import control_headers, raise_for_control_auth
 from .control_plane import ServiceInfo
-from .errors import ReceiptIntegrityError, VerisError
+from .errors import ReceiptIntegrityError, VerisControlAuthError, VerisError
 
 #: Reading one page of a trace log is a small call; bound it like every other.
 RECEIPT_TIMEOUT_S = 30.0
@@ -158,29 +159,50 @@ def _page_rows(service_name: str, status_code: int, text: str) -> list[dict[str,
 
 
 def read_page(
-    service: ServiceInfo, params: Mapping[str, Any], client: httpx.Client | None = None
+    service: ServiceInfo,
+    params: Mapping[str, Any],
+    client: httpx.Client | None = None,
+    *,
+    api_key: str | None = None,
 ) -> list[dict[str, Any]]:
     """One page of a service's trace log."""
+    url = _page_url(service)
     owned = client is None
     http = client or httpx.Client(timeout=RECEIPT_TIMEOUT_S, follow_redirects=False)
     try:
-        response = http.get(_page_url(service), params=dict(params), timeout=RECEIPT_TIMEOUT_S)
+        response = http.get(
+            url,
+            params=dict(params),
+            timeout=RECEIPT_TIMEOUT_S,
+            headers=control_headers(service, url, api_key),
+            follow_redirects=False,
+        )
     finally:
         if owned:
             http.close()
+    raise_for_control_auth(service, response.status_code, "GET /veris/requests", api_key)
     return _page_rows(service.name, response.status_code, response.text)
 
 
 async def read_page_async(
-    service: ServiceInfo, params: Mapping[str, Any], client: httpx.AsyncClient | None = None
+    service: ServiceInfo,
+    params: Mapping[str, Any],
+    client: httpx.AsyncClient | None = None,
+    *,
+    api_key: str | None = None,
 ) -> list[dict[str, Any]]:
+    url = _page_url(service)
+    request: dict[str, Any] = {
+        "params": dict(params),
+        "headers": control_headers(service, url, api_key),
+        "follow_redirects": False,
+    }
     if client is not None:
-        response = await client.get(
-            _page_url(service), params=dict(params), timeout=RECEIPT_TIMEOUT_S
-        )
+        response = await client.get(url, timeout=RECEIPT_TIMEOUT_S, **request)
     else:
         async with httpx.AsyncClient(timeout=RECEIPT_TIMEOUT_S, follow_redirects=False) as owned:
-            response = await owned.get(_page_url(service), params=dict(params))
+            response = await owned.get(url, **request)
+    raise_for_control_auth(service, response.status_code, "GET /veris/requests", api_key)
     return _page_rows(service.name, response.status_code, response.text)
 
 
@@ -190,15 +212,19 @@ def _watermark_of(rows: Sequence[Mapping[str, Any]]) -> int:
     return rows[0]["id"] if rows else 0
 
 
-def fetch_watermark(service: ServiceInfo, client: httpx.Client | None = None) -> int:
+def fetch_watermark(
+    service: ServiceInfo, client: httpx.Client | None = None, *, api_key: str | None = None
+) -> int:
     """The newest row id, so a later read can start from here rather than zero."""
-    return _watermark_of(read_page(service, {"limit": 1, "order": "desc"}, client))
+    return _watermark_of(read_page(service, {"limit": 1, "order": "desc"}, client, api_key=api_key))
 
 
 async def fetch_watermark_async(
-    service: ServiceInfo, client: httpx.AsyncClient | None = None
+    service: ServiceInfo, client: httpx.AsyncClient | None = None, *, api_key: str | None = None
 ) -> int:
-    return _watermark_of(await read_page_async(service, {"limit": 1, "order": "desc"}, client))
+    return _watermark_of(
+        await read_page_async(service, {"limit": 1, "order": "desc"}, client, api_key=api_key)
+    )
 
 
 class _Window:
@@ -240,8 +266,9 @@ class _Window:
         return {"limit": PAGE_LIMIT, "order": "asc", "since_id": self.mark}
 
     def read_failed(self, error: Exception) -> None:
-        """A page that would not read. Fatal only if nothing was read at all."""
-        if not self.raw:
+        """A page that would not read. Fatal only if nothing was read at all —
+        or if the key was refused, which no amount of partial evidence excuses."""
+        if not self.raw or isinstance(error, VerisControlAuthError):
             raise error
         self.incomplete_reason = "read-failed"
 
@@ -282,17 +309,21 @@ class _Window:
 
 
 def fetch_receipt_entry(
-    service: ServiceInfo, since_id: int = 0, client: httpx.Client | None = None
+    service: ServiceInfo,
+    since_id: int = 0,
+    client: httpx.Client | None = None,
+    *,
+    api_key: str | None = None,
 ) -> ReceiptEntry:
     """Read a finite window of one service's log.
 
     The newest-id snapshot taken first also detects a server that silently caps
     pages below the requested limit. Row counts are never subtracted.
     """
-    window = _Window(service, since_id, fetch_watermark(service, client))
+    window = _Window(service, since_id, fetch_watermark(service, client, api_key=api_key))
     while (params := window.next_params()) is not None:
         try:
-            rows = read_page(service, params, client)
+            rows = read_page(service, params, client, api_key=api_key)
         except VerisError as error:
             window.read_failed(error)
             break
@@ -301,12 +332,18 @@ def fetch_receipt_entry(
 
 
 async def fetch_receipt_entry_async(
-    service: ServiceInfo, since_id: int = 0, client: httpx.AsyncClient | None = None
+    service: ServiceInfo,
+    since_id: int = 0,
+    client: httpx.AsyncClient | None = None,
+    *,
+    api_key: str | None = None,
 ) -> ReceiptEntry:
-    window = _Window(service, since_id, await fetch_watermark_async(service, client))
+    window = _Window(
+        service, since_id, await fetch_watermark_async(service, client, api_key=api_key)
+    )
     while (params := window.next_params()) is not None:
         try:
-            rows = await read_page_async(service, params, client)
+            rows = await read_page_async(service, params, client, api_key=api_key)
         except VerisError as error:
             window.read_failed(error)
             break

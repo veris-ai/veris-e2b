@@ -9,7 +9,8 @@ import type { Sandbox, SandboxNetworkUpdate } from 'e2b'
 import type { ControlPlane, ServiceInfo } from './control-plane'
 import { fetchReceiptEntry, probeCanary } from './receipt'
 import type { Receipt, ReceiptEntry, ReceiptLeak } from './receipt'
-import { VerisUntouchedError, VerisError } from './errors'
+import { VerisUntouchedError, VerisError, VerisControlAuthError } from './errors'
+import { controlFetch } from './control-auth'
 import { buildNetwork, callerStaticAllowOut, dataPlaneEnv, isHttpUrl } from './network'
 import type { EgressMode } from './network'
 import { vendoredTrustEnv } from './trust'
@@ -72,6 +73,9 @@ export interface DeliverToOpts {
 export class VerisApiImpl implements VerisApi {
   constructor(private readonly ctx: VerisContext) {}
 
+  /** Sent as X-API-Key to each service's control_url, and nowhere else. */
+  private get apiKey(): string | undefined { return this.ctx.controlPlane.apiKey }
+
   get ownsTwin(): boolean { return this.ctx.ownsTwin }
   get sandboxId(): string { return this.ctx.twinId }
   get environmentId(): string { return this.ctx.environmentId }
@@ -99,10 +103,10 @@ export class VerisApiImpl implements VerisApi {
           `unknown service '${service}' — the twin has no service by that name (available: ${services.map((s) => s.name).join(', ') || 'none'})`,
           { verisSandboxId: this.ctx.twinId })
       }
-      return fetchReceiptEntry(svc)
+      return fetchReceiptEntry(svc, 0, this.apiKey)
     }
     const entries = await Promise.all(
-      services.filter((s) => isHttpUrl(s.control_url)).map(async (svc) => [svc.name, await fetchReceiptEntry(svc)] as const))
+      services.filter((s) => isHttpUrl(s.control_url)).map(async (svc) => [svc.name, await fetchReceiptEntry(svc, 0, this.apiKey)] as const))
     // Proxy mode redirects only tcp/80+443, so QUIC/HTTP3 and ECH bypass it —
     // the same blind spots open gateway mode carries. Strict gateway mode has none.
     const leaks: ReceiptLeak[] = this.ctx.mode === 'proxy' || this.ctx.egress === 'open'
@@ -125,7 +129,7 @@ export class VerisApiImpl implements VerisApi {
   async receiptBaseline(): Promise<ReceiptBaseline> {
     await this.verifyIntegrity()
     return captureBaseline(this.ctx.twinId, this.ctx.sandbox.sandboxId,
-      (await this.services()).filter(s => isHttpUrl(s.control_url)))
+      (await this.services()).filter(s => isHttpUrl(s.control_url)), this.apiKey)
   }
 
   async receiptSince(baseline: ReceiptBaseline, service?: string): Promise<Receipt> {
@@ -134,13 +138,13 @@ export class VerisApiImpl implements VerisApi {
     if (service !== undefined && !services.some(s => s.name === service)) {
       throw new VerisError(`unknown HTTP service '${service}'`, { phase: 'receipt' })
     }
-    await validateBaseline(baseline, this.ctx.twinId, this.ctx.sandbox.sandboxId, services)
+    await validateBaseline(baseline, this.ctx.twinId, this.ctx.sandbox.sandboxId, services, this.apiKey)
     const selected = service === undefined ? services : services.filter(s => s.name === service)
     const entries = await Promise.all(selected.map(async svc =>
-      [svc.name, await fetchReceiptEntry(svc, baseline.services[svc.name]!.id)] as const))
+      [svc.name, await fetchReceiptEntry(svc, baseline.services[svc.name]!.id, this.apiKey)] as const))
     // Reset during the read invalidates the whole measurement, including any
     // pages fetched before history disappeared.
-    await validateBaseline(baseline, this.ctx.twinId, this.ctx.sandbox.sandboxId, await this.services().then(s => s.filter(v => isHttpUrl(v.control_url))))
+    await validateBaseline(baseline, this.ctx.twinId, this.ctx.sandbox.sandboxId, await this.services().then(s => s.filter(v => isHttpUrl(v.control_url))), this.apiKey)
     return { services: Object.fromEntries(entries), mode: this.ctx.mode, integrity: this.ctx.mode === 'gateway' ? 'verified' : 'proxy-mode-unverified',
       leaks: this.ctx.mode === 'proxy' || this.ctx.egress === 'open' ? ['udp-quic-possible', 'ech-possible'] : [] }
   }
@@ -148,7 +152,7 @@ export class VerisApiImpl implements VerisApi {
   async control(service: string, resource: ControlResource, options?: ControlOptions): Promise<unknown> {
     const svc = (await this.services()).find(s => s.name === service)
     if (!svc) throw new VerisError(`unknown service '${service}'`)
-    return serviceControl(svc, resource, options)
+    return serviceControl(svc, resource, options, this.apiKey)
   }
 
   async assertTouched(service: string, match?: TouchMatcher): Promise<void> {
@@ -216,11 +220,18 @@ export class VerisApiImpl implements VerisApi {
   private async probeDelivery(url: string): Promise<void> {
     const services = (await this.services()).filter((s) => isHttpUrl(s.control_url))
     if (!services.length) return
+    // The control plane, never the data url or a vendor host: on a split
+    // sandbox /veris/* there answers the vendor's 404. A refused key is thrown,
+    // not folded into "could not reach": it would fail every probe and send the
+    // caller hunting for a listener that is fine.
     const probes = await Promise.all(services.map(async (svc) => {
       try {
-        const res = await fetch(`${svc.control_url}/veris/client/probe`, { method: 'POST' })
+        const res = await controlFetch(svc, '/veris/client/probe', { method: 'POST' }, this.apiKey)
         return res.ok ? await res.json() as { answered?: boolean } : null
-      } catch { return null }
+      } catch (error) {
+        if (error instanceof VerisControlAuthError) throw error
+        return null
+      }
     }))
     if (!probes.some((p) => p?.answered)) {
       throw new VerisError(
