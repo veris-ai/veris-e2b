@@ -2,7 +2,7 @@
 
 Both packages version together. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
-## 0.2.0 — Unreleased
+## 0.2.0 — 2026-09-30
 
 - Control calls authenticate to split sandboxes' keyed control URL. When a
   service advertises `control_auth: 'api_key'`, every `/veris/*` request
