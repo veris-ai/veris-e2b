@@ -28,15 +28,15 @@ try {
   // --- 1. Read credentials the mocks publish. This is the "how do I identify"
   //        step: services publish working credentials at /veris/data; you read
   //        them, you never invent them.
-  const services = Object.fromEntries((await sbx.veris.services()).map((s) => [s.name, s]))
-  const tokens = await fetch(`${services['google-identity'].control_url}/veris/data?entity_type=oauth_tokens`)
-    .then((r) => r.json())
+  //        veris.control() reads the service's control_url with your Veris API
+  //        key; a bare fetch() of it gets a 401 on a split sandbox.
+  const tokens = await sbx.veris.control('google-identity', 'data', { query: { entity_type: 'oauth_tokens' } })
   const active = tokens.rows.find((t) => t.status === 'active')
   log(`google-identity published ${tokens.rows.length} tokens; using ${active.id} (status=${active.status})`)
 
   // Stripe publishes its key the same way: config.api_keys. Read it, never
   // invent one -- an invented key is refused exactly as the real vendor would.
-  const cfg = await fetch(`${services['stripe'].control_url}/veris/data?entity_type=config`).then((r) => r.json())
+  const cfg = await sbx.veris.control('stripe', 'data', { query: { entity_type: 'config' } })
   const stripeKey = cfg.rows[0].api_keys[0]
   log(`stripe published key ${stripeKey.slice(0, 12)}… (${cfg.rows[0].api_keys.length} keys)`)
 

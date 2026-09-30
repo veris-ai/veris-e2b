@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 import httpx
 
+from .control_auth import control_headers, raise_for_control_auth
 from .control_plane import ServiceInfo
 from .errors import VerisError
 
@@ -23,6 +24,7 @@ _RESOURCES = frozenset({"manual", "schema", "operations", "data", "requests"})
 _METHODS = frozenset({"GET", "POST", "PATCH"})
 #: A control call is a small request; bound it like every other.
 CONTROL_TIMEOUT_S = 30.0
+_JSON = {"Content-Type": "application/json"}
 
 
 def _check(service: ServiceInfo, resource: str, method: str, body: Any) -> None:
@@ -68,23 +70,27 @@ def service_control(
     query: Mapping[str, str] | None = None,
     body: Any = None,
     client: httpx.Client | None = None,
+    api_key: str | None = None,
 ) -> Any:
     """Read (or, for ``data``, write) one of a service's control resources."""
     _check(service, resource, method, body)
+    url = _url(service, resource)
     owned = client is None
     http = client or httpx.Client(timeout=CONTROL_TIMEOUT_S, follow_redirects=False)
     try:
         response = http.request(
             method,
-            _url(service, resource),
+            url,
             params=dict(query or {}),
             json=body,
             timeout=CONTROL_TIMEOUT_S,
-            headers={"Content-Type": "application/json"},
+            headers=control_headers(service, url, api_key, _JSON),
+            follow_redirects=False,
         )
     finally:
         if owned:
             http.close()
+    raise_for_control_auth(service, response.status_code, f"{method} /veris/{resource}", api_key)
     return _decode(service.name, resource, method, response.status_code, response.text)
 
 
@@ -96,18 +102,20 @@ async def service_control_async(
     query: Mapping[str, str] | None = None,
     body: Any = None,
     client: httpx.AsyncClient | None = None,
+    api_key: str | None = None,
 ) -> Any:
     _check(service, resource, method, body)
-    request = {
+    url = _url(service, resource)
+    request: dict[str, Any] = {
         "params": dict(query or {}),
         "json": body,
-        "headers": {"Content-Type": "application/json"},
+        "headers": control_headers(service, url, api_key, _JSON),
+        "follow_redirects": False,
     }
     if client is not None:
-        response = await client.request(
-            method, _url(service, resource), timeout=CONTROL_TIMEOUT_S, **request
-        )
+        response = await client.request(method, url, timeout=CONTROL_TIMEOUT_S, **request)
     else:
         async with httpx.AsyncClient(timeout=CONTROL_TIMEOUT_S, follow_redirects=False) as owned:
-            response = await owned.request(method, _url(service, resource), **request)
+            response = await owned.request(method, url, **request)
+    raise_for_control_auth(service, response.status_code, f"{method} /veris/{resource}", api_key)
     return _decode(service.name, resource, method, response.status_code, response.text)

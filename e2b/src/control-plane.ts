@@ -14,10 +14,15 @@ export interface ServiceInfo {
   status: string
   /** What the code under test points at: gateway URL for http services, a DSN for e.g. postgres. */
   url: string
-  /** Where /veris/* lives — always an http URL. */
+  /** Where /veris/* lives — always an http URL. On a split sandbox this is
+   *  /c/<sandbox>/<svc> on the same host as `url` and requires the Veris API
+   *  key; the SDK sends it there and only there. */
   control_url: string
   env_hint?: string | null
   routes?: RouteEntry[] | null
+  /** How control_url authenticates: 'api_key' on split sandboxes, null/absent
+   *  on older ones whose control URL is still keyless. */
+  control_auth?: 'api_key' | (string & {}) | null
 }
 
 export interface TwinSandbox {
@@ -62,10 +67,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export class ControlPlane {
   readonly apiBase: string
+  /** Also what each twin service's keyed control_url expects. */
+  readonly apiKey: string
   private readonly headers: Record<string, string>
 
   constructor(opts: ControlPlaneOpts) {
     this.apiBase = opts.apiBase.replace(/\/$/, '')
+    this.apiKey = opts.apiKey
     this.headers = {
       'X-API-Key': opts.apiKey,
       'X-Veris-SDK': opts.sdkVersion,

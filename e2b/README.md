@@ -124,3 +124,14 @@ retain application response/state assertions. Preserve mode, integrity and leaks
 `{data: {table: [rows]}}` envelope, including fault rows. Coordinates come from the
 attached twin; lifecycle and arbitrary URLs are excluded. SDK callers own write
 authorization; the OpenCode plugin applies its configured write permission.
+
+Every one of these calls — receipts, baselines, `control`, and the `deliverTo`
+reachability probe — goes to the service's `control_url`. Split sandboxes serve
+`/veris/*` on a keyed `/c/<sandbox>/<service>` URL (`control_auth: 'api_key'`)
+and answer `/veris/*` on the data-plane `url` and on vendor hostnames with the
+vendor's 404; there the SDK sends your Veris API key as `X-API-Key`. When
+`control_auth` is null or absent (older or pinned sandboxes), `control_url` is
+the keyless `/s/` data URL — the twin itself — and no key is sent. The key is only ever attached to a URL under the service's own
+`control_url`, never to the data plane or a vendor host, and control requests
+refuse redirects. A refused key throws `VerisControlAuthError` naming the
+credential rather than a bare 401.
